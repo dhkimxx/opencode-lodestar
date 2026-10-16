@@ -69,7 +69,20 @@ There is nothing to do. lodestar works whenever OpenCode compacts a session, whe
 
 ## Results
 
-RESULTS_PLACEHOLDER
+Measured with the harness in [`eval/`](eval/README.md): five short coding tasks, each compacted at fixed points and checked with tests the agent never saw. With `opencode-go/longcat-2.5-preview-free`, 18 runs per configuration:
+
+| | OpenCode alone | With lodestar |
+| --- | --- | --- |
+| Tasks completed | 15 of 18 | 16 of 18 |
+| Files read again after compaction, per task | 4.4 | 0.9 |
+| Prompt tokens per task | 164k | 149k (−9%) |
+| Output tokens per task | 3.9k | 4.7k (+21%) |
+| Minutes per task | 2.6 | 3.3 (+27%) |
+| Prompt cache hit rate | 86% | 85% |
+
+A cross-check with `opencode-go/mimo-v2.5` finished every task in both configurations. Files read again after compaction went from 4.0 per task to none, and prompt tokens rose 2%.
+
+The fuller summary is a separate request, so compactions take longer and use more output tokens. Details, per-feature results, and limitations are in [eval/results/v0.1.0.md](eval/results/v0.1.0.md).
 
 ## Development
 
