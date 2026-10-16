@@ -144,6 +144,8 @@ export function outsideAccess(data: SessionExport, workdir: string, home: string
         if (typeof value !== "string") continue
         for (const match of value.matchAll(/(?:^|[\s'"=(])(\/[^\s'"`;|&)]+)/g)) {
           const file = match[1] ?? ""
+          // A path that trails off, like "/home/me/...", is a placeholder in text the agent wrote, not a file.
+          if (/(\.\.\.|…)$/.test(file)) continue
           if (file.startsWith(home) && !file.startsWith(workdir) && !allowed.some((dir) => file.startsWith(dir))) found.add(file)
         }
       }

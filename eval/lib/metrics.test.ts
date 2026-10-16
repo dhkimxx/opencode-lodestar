@@ -76,6 +76,7 @@ test("finds tool calls that reach outside the project into the user's home", () 
         tool("read", { path: "/home/me/workspace/other-repo/README.md" }),
         tool("shell", { command: "cd /home/me/workspace && ls", workdir: "/home/me/.cache/ws/ab12/project" }),
         tool("shell", { command: "ls /tmp && cat /usr/include/stdio.h" }),
+        tool("shell", { command: "cat > notes.md << 'EOF'\nThe edit tool works with /home/me/... paths.\nEOF" }),
       ),
     ],
   }
