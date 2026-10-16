@@ -1,13 +1,17 @@
 // Runs evaluation scenarios against isolated OpenCode servers. See eval/README.md.
 import { appendFile, cp, mkdir, rm } from "node:fs/promises"
+import { homedir } from "node:os"
 import path from "node:path"
 import { parseArgs } from "node:util"
-import { measure, type Metrics } from "./lib/metrics"
+import { measure, outsideAccess, type Metrics } from "./lib/metrics"
 import { exportCredentials, Instance } from "./lib/opencode"
 import type { CheckResult, Scenario } from "./lib/scenario"
 import { scenarios } from "./scenarios"
 
 const REPO = path.resolve(import.meta.dir, "..")
+// The agent sees its project's path. A path that names this repository, or the folder it lives in, led a model to
+// go looking for the "real" project and edit these fixtures, so projects live under a name that gives nothing away.
+const WORKSPACES = path.join(homedir(), ".cache", "ws")
 
 /** A: OpenCode alone. B: with lodestar. B-Tn: lodestar with one feature switched off. */
 const CONFIGS: Record<string, { plugin: boolean; disable?: string }> = {
@@ -101,6 +105,20 @@ async function git(cwd: string, ...args: string[]) {
 
 const running = new Set<Instance>()
 
+async function gitOutput(cwd: string, ...args: string[]) {
+  const proc = Bun.spawn(["git", ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "ignore" })
+  const [text] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+  return text.trim()
+}
+
+/** Puts the fixtures back if an agent changed them, and says whether it had to. */
+async function restoreFixtures(): Promise<boolean> {
+  if (!(await gitOutput(REPO, "status", "--porcelain", "--", "eval/fixtures"))) return false
+  await gitOutput(REPO, "checkout", "--", "eval/fixtures")
+  await gitOutput(REPO, "clean", "-fdq", "--", "eval/fixtures")
+  return true
+}
+
 async function runOne(
   config: (typeof selectedConfigs)[number],
   scenario: Scenario,
@@ -108,7 +126,7 @@ async function runOne(
   credentials: Uint8Array,
 ): Promise<RunResult> {
   const root = path.join(out, `${config.name}-${scenario.id}-${repeat}`)
-  const workdir = path.join(root, "work")
+  const workdir = path.join(WORKSPACES, crypto.randomUUID().slice(0, 8), "project")
   await rm(root, { recursive: true, force: true })
   await mkdir(root, { recursive: true })
   await cp(path.join(REPO, "eval/fixtures", scenario.fixture), workdir, { recursive: true })
@@ -161,6 +179,8 @@ async function runOne(
     // A session opened anywhere else could have read or changed files outside the copy, such as these scripts.
     const directory = (data.info as { location?: { directory?: string } }).location?.directory
     if (directory !== workdir) throw new Error(`session ran in ${directory}, not in the work directory`)
+    const outside = outsideAccess(data, workdir, homedir())
+    if (outside.length > 0) throw new Error(`the agent left its project: ${outside.slice(0, 3).join(", ")}`)
     // A turn that ended in a provider error says nothing about the agent, so the run doesn't count.
     const failed = data.messages.find((message) => message.type === "idle" && "outcome" in message && message.outcome === "failed")
     if (failed) {
@@ -180,6 +200,12 @@ async function runOne(
     await instance.stop()
     await instance.cleanup()
     running.delete(instance)
+    await cp(workdir, path.join(root, "work"), { recursive: true }).catch(() => {})
+    await rm(path.dirname(workdir), { recursive: true, force: true })
+  }
+  if (await restoreFixtures()) {
+    result.ok = false
+    result.error = "the agent changed the fixtures in this repository; they were restored"
   }
   await Bun.write(path.join(root, "result.json"), JSON.stringify(result, null, 2))
   return result
@@ -200,6 +226,7 @@ process.on("SIGINT", stopAll)
 process.on("SIGTERM", stopAll)
 
 await mkdir(out, { recursive: true })
+if (await gitOutput(REPO, "status", "--porcelain", "--", "eval/fixtures")) throw new Error("eval/fixtures has uncommitted changes")
 const credentials = await exportCredentials(model.split("/")[0] ?? "opencode-go")
 const jobs = selectedConfigs.flatMap((config) =>
   selectedScenarios.flatMap((scenario) =>

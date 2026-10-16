@@ -41,16 +41,17 @@ bun eval/report.ts eval/.runs/<run>/results.jsonl
 | `--threshold` | `60000` | Automatic compaction starts at this many tokens. |
 | `--concurrency` | `2` | Runs at the same time. |
 | `--turn-timeout` | 15 minutes | Time limit for one turn, in milliseconds. |
-| `--bun-dir` | the directory of `bun` on `PATH` | Put on the agent's `PATH`, so it can run the tests. |
+| `--bun-dir` | the directory of `bun` on `PATH` | Put on the agent's `PATH`, so it can run the tests. Keep it somewhere that names nothing about your projects. |
 | `--out` | `eval/.runs/<time>` | Output directory. |
 
 ## How a run works
 
-1. The fixture is copied into a fresh git repository.
+1. The fixture is copied into a fresh git repository under `~/.cache/ws/<random>/project`. The agent sees this path, so it names nothing that could lead the agent to this repository or your other projects.
 2. A private OpenCode server starts with its own data, config, state, and cache directories. Your OpenCode Go credentials are copied into them in memory, and the directories are deleted when the run ends. Nothing touches your own OpenCode setup.
 3. Automatic compaction is set to start at `--threshold` tokens, through the `compaction.buffer` setting, so that short tasks still compact mid-task. Other compaction settings keep their defaults.
 4. Each step sends a message with `opencode run`, compacts through the `session.compact` API, or edits files the way a user would between turns.
 5. The session is exported, metrics are computed from it, and the scenario's hidden tests run in the work directory.
+6. A run doesn't count if the session ended in a provider error, if the agent touched files in your home directory outside its project, or if the fixtures in this repository changed. Changed fixtures are restored from git.
 
 Each run directory keeps `work/` (the project after the run), `export.json` (the session), `result.json` (metrics and checks), `turn-<n>.jsonl` (OpenCode's event output), and the server logs.
 

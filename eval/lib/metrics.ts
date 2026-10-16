@@ -131,3 +131,23 @@ export function measure(data: SessionExport): Metrics {
   metrics.durationMs = Math.max(0, (data.info.time.idle ?? last) - data.info.time.created)
   return metrics
 }
+
+/** Paths under the user's home that a tool call touched outside the project, like another repository. */
+export function outsideAccess(data: SessionExport, workdir: string, home: string): string[] {
+  const found = new Set<string>()
+  for (const message of data.messages) {
+    if (!isAssistant(message)) continue
+    for (const part of message.content) {
+      if (!isTool(part)) continue
+      const input = part.state.input ?? {}
+      for (const value of [input.path, input.filePath, input.workdir, input.command, input.pattern]) {
+        if (typeof value !== "string") continue
+        for (const match of value.matchAll(/(?:^|[\s'"=(])(\/[^\s'"`;|&)]+)/g)) {
+          const file = match[1] ?? ""
+          if (file.startsWith(home) && !file.startsWith(workdir)) found.add(file)
+        }
+      }
+    }
+  }
+  return [...found]
+}
