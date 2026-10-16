@@ -3,7 +3,7 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.1.0] - 2026-10-17
 
 ### Added
 
@@ -12,3 +12,5 @@ This project follows [Semantic Versioning](https://semver.org).
 - When a file the agent read changes on disk, the agent is told before its next step.
 - After eight tool calls in a row with no message to the user, the agent is asked for a one-line recap.
 - An evaluation harness that runs five scenarios against isolated OpenCode servers.
+
+[0.1.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.1.0

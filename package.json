@@ -1,6 +1,6 @@
 {
   "name": "@dhkimxx/opencode-lodestar",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Keeps OpenCode on track through compaction. Restores recent files, plans, and skills, and writes fuller summaries.",
   "keywords": [
     "opencode",
