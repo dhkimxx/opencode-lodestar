@@ -74,9 +74,6 @@ var RESTORE_PLAN_TOKENS = 5000;
 var RESTORE_SHARE = 0.2;
 var RESTORE_MIN_TOKENS = 1e4;
 var RESTORE_MAX_TOKENS = 40000;
-var SUMMARY_TIMEOUT_MS = 120000;
-var SUMMARY_INPUT_SHARE = 0.5;
-var SUMMARY_MAX_INPUT_TOKENS = 1e5;
 var RECITE_AFTER_TOOL_CALLS = 8;
 var STALE_CHECK_FILES = 50;
 var PROGRESS_NOTES = 3;
@@ -97,7 +94,6 @@ function textOf(message) {
 function checkpointIndex(messages) {
   return messages.findLastIndex((message) => message.role === "user" && textOf(message).startsWith(CHECKPOINT));
 }
-var isCheckpoint = (message) => message.role === "user" && textOf(message).startsWith(CHECKPOINT);
 function userMessage(messages, text) {
   const host = messages[0]?.constructor;
   if (typeof host?.user !== "function")
@@ -363,120 +359,6 @@ class Store {
   }
 }
 
-// src/summary.ts
-var SECTIONS = [
-  "## User requests",
-  "Every request the user made, in order, each marked done, in progress, or not started. Quote the user's own words for any request that isn't done.",
-  "## Rules from the user",
-  "Every rule, constraint, and preference the user stated, word for word: what to do, what never to do, and which files or areas are off limits. Keep all of them, even ones that seem minor or were stated long ago.",
-  "## Key facts",
-  "Facts the work depends on: how the code is organized, the conventions it follows, and decisions made, with their reasons.",
-  "## Files",
-  "Each file read or changed, with what matters about it. Include short code excerpts wherever later work has to match exact names, signatures, or values.",
-  "## Errors and fixes",
-  "Each error, quoted exactly, and what fixed it. Also what was tried and didn't work, so it isn't tried again.",
-  "## Plan and progress",
-  "The plan or task list, if there is one, with the status of every item.",
-  "## Current work",
-  "What was being done right before this checkpoint, in detail.",
-  "## Next step",
-  "The next step, as it follows from the user's latest request. Don't invent new work."
-];
-var HEADINGS = SECTIONS.filter((line) => line.startsWith("## "));
-var clip = (text, chars) => text.length <= chars ? text : `${text.slice(0, chars)}
-[\u2026 ${text.length - chars} more characters]`;
-function resultText(part) {
-  const result = part.result;
-  if (!result)
-    return "";
-  if (result.type === "text" && typeof result.value === "string")
-    return result.value;
-  if (result.type === "error")
-    return `Error: ${typeof result.value === "string" ? result.value : JSON.stringify(result.value)}`;
-  if (result.type === "content" && Array.isArray(result.value)) {
-    return result.value.map((item) => item.type === "text" ? item.text ?? "" : `[${item.type}]`).join(`
-`);
-  }
-  return JSON.stringify(result.value) ?? "";
-}
-function transcript(messages, maxTokens) {
-  let previous;
-  const entries = [];
-  for (const message of messages) {
-    if (isCheckpoint(message)) {
-      previous = textOf(message);
-      continue;
-    }
-    for (const part of parts(message)) {
-      if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
-        const limit = message.role === "user" ? entries.length === 0 ? 20000 : 12000 : 4000;
-        entries.push({ text: `[${message.role}]
-${clip(part.text, limit)}` });
-      } else if (part.type === "tool-call") {
-        entries.push({ text: `[tool call: ${String(part.name)}] ${clip(JSON.stringify(part.input) ?? "", 1500)}` });
-      } else if (part.type === "tool-result") {
-        entries.push({ text: "", label: `[tool result: ${String(part.name)}]`, output: resultText(part) });
-      }
-    }
-  }
-  const results = entries.filter((entry) => entry.output !== undefined);
-  results.forEach((entry, index) => {
-    const limit = index >= results.length - 30 ? 4000 : 600;
-    entry.text = `${entry.label}
-${clip(entry.output ?? "", limit)}`;
-  });
-  const limit = maxTokens * 4;
-  const size = () => entries.reduce((sum, entry) => sum + entry.text.length + 2, 0);
-  if (size() > limit)
-    for (const entry of results)
-      entry.text = `${entry.label}
-${clip(entry.output ?? "", 200)}`;
-  while (size() > limit && entries.length > 2)
-    entries.splice(1, 1);
-  return { previous, text: entries.map((entry) => entry.text).join(`
-
-`) };
-}
-function summaryPrompt(input) {
-  return [
-    "You are writing the checkpoint for a coding session. The conversation below will be removed, and the agent will continue from this checkpoint, the most recent messages, and fresh copies of the files it was working with. Anything you leave out is lost.",
-    "",
-    "Write Markdown with exactly these sections, in this order:",
-    "",
-    SECTIONS.join(`
-`),
-    "",
-    "Write facts, not commentary. Stay under 2,000 words. Don't call tools. Reply with the checkpoint only.",
-    ...input.previous ? ["", "Carry everything that still matters from the previous checkpoint into the new one.", "<previous-checkpoint>", input.previous, "</previous-checkpoint>"] : [],
-    "",
-    "<conversation>",
-    input.conversation,
-    "</conversation>"
-  ].join(`
-`);
-}
-var looksLikeCheckpoint = (text) => HEADINGS.filter((heading) => text.includes(heading)).length >= 5;
-function summaryInputTokens(window) {
-  return Math.floor(Math.min(SUMMARY_MAX_INPUT_TOKENS, SUMMARY_INPUT_SHARE * window));
-}
-async function withTimeout(promise, ms = SUMMARY_TIMEOUT_MS) {
-  let timer;
-  const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(undefined), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-var estimateUsage = (prompt, reply) => ({
-  input: estimateTokens(prompt),
-  output: estimateTokens(reply),
-  reasoning: 0,
-  cache: { read: 0, write: 0 }
-});
-
 // src/index.ts
 var DEFAULT_WINDOW = 200000;
 var src_default = Plugin.define({
@@ -558,31 +440,6 @@ var src_default = Plugin.define({
       const state = await store.get(event.sessionID);
       state.compactedTokens = estimateTokens(JSON.stringify(event.messages.map((message) => message.content)));
       store.save(event.sessionID);
-      if (!on("T3") || event.result)
-        return;
-      const { previous, text } = transcript(event.messages, summaryInputTokens(await contextWindow(event.model)));
-      if (!text.trim() && !previous)
-        return;
-      const prompt = summaryPrompt({ previous, conversation: text });
-      const started = Date.now();
-      const reply = await withTimeout(ctx.generate.text({ prompt, model: event.model }).catch((error) => {
-        trace({ sessionID: event.sessionID, feature: "T3", event: "error", error: String(error) });
-        return;
-      }));
-      const summary = reply?.text.trim();
-      if (!summary || !looksLikeCheckpoint(summary)) {
-        trace({ sessionID: event.sessionID, feature: "T3", event: "fallback", ms: Date.now() - started, empty: !summary });
-        return;
-      }
-      event.result = { summary, tokens: estimateUsage(prompt, summary) };
-      trace({
-        sessionID: event.sessionID,
-        feature: "T3",
-        event: "summary",
-        ms: Date.now() - started,
-        inputTokens: estimateTokens(prompt),
-        outputTokens: estimateTokens(summary)
-      });
     }));
     registrations.push(await ctx.session.hook("context", async (event) => {
       const state = await store.get(event.sessionID);

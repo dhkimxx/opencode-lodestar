@@ -18,7 +18,6 @@ const CONFIGS: Record<string, { plugin: boolean; disable?: string }> = {
   A: { plugin: false },
   B: { plugin: true },
   "B-T2": { plugin: true, disable: "T2" },
-  "B-T3": { plugin: true, disable: "T3" },
   "B-T4": { plugin: true, disable: "T4" },
   "B-T6": { plugin: true, disable: "T6" },
 }

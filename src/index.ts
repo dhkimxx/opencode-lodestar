@@ -7,10 +7,9 @@ import { checkpointIndex, insertNearEnd, textOf, userMessage } from "./messages"
 import { recitation, staleFiles, staleNotice } from "./reminders"
 import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
-import { estimateUsage, looksLikeCheckpoint, summaryInputTokens, summaryPrompt, transcript, withTimeout } from "./summary"
 import { estimateTokens } from "./tokens"
 
-type Feature = "T2" | "T3" | "T4" | "T6"
+type Feature = "T2" | "T4" | "T6"
 type ModelRef = { readonly providerID: string; readonly id: string }
 
 /** Used when a model's context window can't be looked up. */
@@ -105,37 +104,12 @@ export default Plugin.define({
       }),
     )
 
-    // T3: a fuller summary than OpenCode's own. Any failure leaves `result` unset, so OpenCode's summary runs.
+    // How big the conversation was when OpenCode compacted it. That sets how much T2 may restore.
     registrations.push(
       await ctx.session.hook("compaction", async (event) => {
         const state = await store.get(event.sessionID)
         state.compactedTokens = estimateTokens(JSON.stringify(event.messages.map((message) => (message as { content?: unknown }).content)))
         store.save(event.sessionID)
-        if (!on("T3") || event.result) return
-        const { previous, text } = transcript(event.messages, summaryInputTokens(await contextWindow(event.model)))
-        if (!text.trim() && !previous) return
-        const prompt = summaryPrompt({ previous, conversation: text })
-        const started = Date.now()
-        const reply = await withTimeout(
-          ctx.generate.text({ prompt, model: event.model }).catch((error: unknown) => {
-            trace({ sessionID: event.sessionID, feature: "T3", event: "error", error: String(error) })
-            return undefined
-          }),
-        )
-        const summary = reply?.text.trim()
-        if (!summary || !looksLikeCheckpoint(summary)) {
-          trace({ sessionID: event.sessionID, feature: "T3", event: "fallback", ms: Date.now() - started, empty: !summary })
-          return
-        }
-        event.result = { summary, tokens: estimateUsage(prompt, summary) }
-        trace({
-          sessionID: event.sessionID,
-          feature: "T3",
-          event: "summary",
-          ms: Date.now() - started,
-          inputTokens: estimateTokens(prompt),
-          outputTokens: estimateTokens(summary),
-        })
       }),
     )
 

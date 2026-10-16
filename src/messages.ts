@@ -4,7 +4,7 @@ const CHECKPOINT = "<conversation-checkpoint>"
 
 type Part = { readonly type: string; readonly [key: string]: unknown }
 
-export function parts(message: Message): readonly Part[] {
+function parts(message: Message): readonly Part[] {
   const content = (message as { content: unknown }).content
   if (typeof content === "string") return [{ type: "text", text: content }]
   return Array.isArray(content) ? (content as Part[]) : []
@@ -20,8 +20,6 @@ export function textOf(message: Message): string {
 export function checkpointIndex(messages: readonly Message[]): number {
   return messages.findLastIndex((message) => message.role === "user" && textOf(message).startsWith(CHECKPOINT))
 }
-
-export const isCheckpoint = (message: Message) => message.role === "user" && textOf(message).startsWith(CHECKPOINT)
 
 /**
  * Makes a user message with the host's own Message class, taken from a message already in the request.

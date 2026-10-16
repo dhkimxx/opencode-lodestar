@@ -1,7 +1,7 @@
 {
   "name": "@dhkimxx/opencode-lodestar",
   "version": "0.1.0",
-  "description": "Keeps OpenCode on track through compaction. Restores recent files, plans, and skills, and writes fuller summaries.",
+  "description": "Keeps OpenCode on track through compaction. Puts recent files, plans, and skills back after each compaction.",
   "keywords": [
     "opencode",
     "opencode-plugin",

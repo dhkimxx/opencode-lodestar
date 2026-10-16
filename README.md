@@ -2,12 +2,11 @@
 
 Keeps [OpenCode](https://opencode.ai) on track through compaction.
 
-When a long session fills the context window, OpenCode replaces the conversation with a summary. Work that lived only in the conversation, like the files the agent was editing and the plan it was following, gets lost, and the agent spends the next steps reading it all again. lodestar puts that work back right after compaction and writes a fuller summary, so the agent picks up where it left off.
+When a long session fills the context window, OpenCode replaces the conversation with a summary. Work that lived only in the conversation, like the files the agent was editing and the plan it was following, gets lost, and the agent spends the next steps reading it all again. lodestar puts that work back right after compaction, so the agent picks up where it left off.
 
 ## Features
 
 - **Puts the work back.** Right after a compaction, the agent gets fresh copies of the files it was working with (up to five), its plan, its latest progress notes, and the skills it had loaded.
-- **Fuller summaries.** lodestar writes the compaction summary with the session's own model. It keeps your rules word for word, every request with its status, errors with their fixes, and the code details later work depends on. If anything goes wrong, OpenCode writes its usual summary instead.
 - **Notices outside changes.** When a file the agent read changes on disk, through your editor, a formatter, or a teammate's pull, the agent is told before its next step.
 - **Keeps long runs on track.** After eight tool calls in a row with no word to you, the agent is asked for a one-line recap of what is done and what comes next.
 - **Nothing to configure.** The defaults come from evaluation, and there are no settings to tune.
@@ -57,19 +56,17 @@ There is nothing to do. lodestar works whenever OpenCode compacts a session, whe
 ## How it works
 
 - **Tracking.** lodestar follows each session's tool calls: the files it reads and changes, the skills it loads, and its progress notes. This lives in OpenCode's plugin storage, one record per session, and is deleted with the session.
-- **The summary.** When OpenCode compacts, lodestar sends the older conversation to the session's model with its own summary instructions and hands the result to OpenCode. OpenCode still decides when to compact and how much recent conversation to keep.
 - **Restoring.** The restored files, plan, notes, and skills go into the request right after the summary. They are read from disk once per compaction and stay the same until the next one, so the provider's prompt cache keeps working. Files over about 5,000 tokens come back as a path the agent can read again. The whole restoration may use up to 20% of the size the conversation had when it was compacted, with a floor of 10,000 tokens and a ceiling of 40,000, and never more than 20% of the model's context window.
 - **Reminders.** The recap request and the changed-file notice are added to a single request and never saved in the session.
 
 ## With other plugins
 
-- If another plugin already writes the compaction summary, lodestar leaves it alone.
 - A plugin that replaces OpenCode's compaction entirely leaves lodestar's restore step idle, since lodestar only acts on OpenCode's own compactions.
 - lodestar doesn't prune old tool output. That is a separate job, done by plugins such as Dynamic Context Pruning.
 
 ## Results
 
-Measured with the harness in [`eval/`](eval/README.md): five short coding tasks, each compacted at fixed points and checked with tests the agent never saw. With `opencode-go/longcat-2.5-preview-free`, 18 runs per configuration:
+Measured on v0.1.0 with the harness in [`eval/`](eval/README.md): five short coding tasks, each compacted at fixed points and checked with tests the agent never saw. With `opencode-go/longcat-2.5-preview-free`, 18 runs per configuration:
 
 | | OpenCode alone | With lodestar |
 | --- | --- | --- |
@@ -82,7 +79,7 @@ Measured with the harness in [`eval/`](eval/README.md): five short coding tasks,
 
 A cross-check with `opencode-go/mimo-v2.5` finished every task in both configurations. Files read again after compaction went from 4.0 per task to none, and prompt tokens rose 2%.
 
-The fuller summary is a separate request, so compactions take longer and use more output tokens. Details, per-feature results, and limitations are in [eval/results/v0.1.0.md](eval/results/v0.1.0.md).
+Details, per-feature results, and limitations are in [eval/results/v0.1.0.md](eval/results/v0.1.0.md).
 
 ## Development
 
