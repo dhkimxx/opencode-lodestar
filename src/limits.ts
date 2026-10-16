@@ -2,6 +2,8 @@
 
 /** Files restored after compaction, the most recently changed first. */
 export const RESTORE_FILES = 5
+/** Further files the session used, listed by path only. */
+export const RESTORE_OTHER_FILES = 30
 /** A file larger than this comes back as a path reference instead of its content. */
 export const RESTORE_FILE_TOKENS = 5_000
 export const RESTORE_SKILL_TOKENS = 5_000

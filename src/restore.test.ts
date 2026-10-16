@@ -45,6 +45,8 @@ describe("buildRestoration", () => {
     expect(restoration?.files).toBe(5)
     expect(restoration?.text).toContain("### f6.ts\n\n```\n1: export const value6 = 6")
     expect(restoration?.text).not.toContain("### f1.ts")
+    expect(restoration?.text).toContain("## Other files you used earlier")
+    expect(restoration?.text).toContain("- f1.ts\n- f0.ts")
     expect(restoration?.text).not.toMatch(/<file|path="/)
   })
 

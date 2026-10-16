@@ -66,6 +66,7 @@ async function recordTool(state, input) {
 
 // src/limits.ts
 var RESTORE_FILES = 5;
+var RESTORE_OTHER_FILES = 30;
 var RESTORE_FILE_TOKENS = 5000;
 var RESTORE_SKILL_TOKENS = 5000;
 var RESTORE_SKILLS_TOTAL = 25000;
@@ -205,7 +206,8 @@ ${state.notes.map((note) => `- ${note}`).join(`
 
 ${keepStart(planText, RESTORE_PLAN_TOKENS)}`);
   const candidates = await Promise.all(records.filter((record) => !record.path.startsWith(PLAN_DIR + path3.sep)).map(async (record) => ({ record, disk: await diskState(record.path) })));
-  const recent = candidates.flatMap((candidate) => candidate.disk ? [{ ...candidate, disk: candidate.disk }] : []).sort((a, b) => b.disk.mtimeMs - a.disk.mtimeMs || lastUsed(b.record) - lastUsed(a.record)).slice(0, RESTORE_FILES);
+  const onDisk = candidates.flatMap((candidate) => candidate.disk ? [{ ...candidate, disk: candidate.disk }] : []).sort((a, b) => b.disk.mtimeMs - a.disk.mtimeMs || lastUsed(b.record) - lastUsed(a.record));
+  const recent = onDisk.slice(0, RESTORE_FILES);
   const fileSections = [];
   let files = 0;
   let references = 0;
@@ -242,6 +244,15 @@ ${fileSections.join(`
 
 `)}`);
   }
+  const others = onDisk.slice(RESTORE_FILES).sort((a, b) => lastUsed(b.record) - lastUsed(a.record)).slice(0, RESTORE_OTHER_FILES).map(({ record }) => `- ${relative(record.path)}`);
+  if (others.length > 0) {
+    take(`## Other files you used earlier
+
+Not restored. Read them again when your task touches them.
+
+${others.join(`
+`)}`);
+  }
   const skillSections = [];
   let skillBudget = RESTORE_SKILLS_TOTAL;
   for (const skill of Object.values(state.skills).sort((a, b) => b.at - a.at)) {
@@ -268,7 +279,7 @@ ${skillSections.join(`
     return;
   const text = [
     "<restored-context>",
-    "The conversation was compacted. lodestar read the working context below fresh from disk right after the compaction. Use it instead of reading these files again, unless they may have changed since.",
+    "The conversation was compacted. lodestar read the files below fresh from disk right after the compaction, so you don't need to read them again unless they changed since. Other files you used earlier are listed by path only.",
     "",
     sections.join(`
 

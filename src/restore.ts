@@ -7,6 +7,7 @@ import {
   RESTORE_FILES,
   RESTORE_MAX_TOKENS,
   RESTORE_MIN_TOKENS,
+  RESTORE_OTHER_FILES,
   RESTORE_PLAN_TOKENS,
   RESTORE_SHARE,
   RESTORE_SKILL_TOKENS,
@@ -78,10 +79,10 @@ export async function buildRestoration(state: SessionState, window: number, summ
       .filter((record) => !record.path.startsWith(PLAN_DIR + path.sep))
       .map(async (record) => ({ record, disk: await diskState(record.path) })),
   )
-  const recent = candidates
+  const onDisk = candidates
     .flatMap((candidate) => (candidate.disk ? [{ ...candidate, disk: candidate.disk }] : []))
     .sort((a, b) => b.disk.mtimeMs - a.disk.mtimeMs || lastUsed(b.record) - lastUsed(a.record))
-    .slice(0, RESTORE_FILES)
+  const recent = onDisk.slice(0, RESTORE_FILES)
   const fileSections: string[] = []
   let files = 0
   let references = 0
@@ -108,6 +109,17 @@ export async function buildRestoration(state: SessionState, window: number, summ
     sections.push(`## Files you were working with\n\nCurrent contents, with line numbers.\n\n${fileSections.join("\n\n")}`)
   }
 
+  // Only a few files come back, so name the rest. Without this list, an agent that saw some files restored
+  // stopped looking at the others, and missed uses of a function it was asked to rename everywhere.
+  const others = onDisk
+    .slice(RESTORE_FILES)
+    .sort((a, b) => lastUsed(b.record) - lastUsed(a.record))
+    .slice(0, RESTORE_OTHER_FILES)
+    .map(({ record }) => `- ${relative(record.path)}`)
+  if (others.length > 0) {
+    take(`## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n${others.join("\n")}`)
+  }
+
   // Newest skills first. Each keeps its start, since instructions near the top matter most.
   const skillSections: string[] = []
   let skillBudget = RESTORE_SKILLS_TOTAL
@@ -128,7 +140,7 @@ export async function buildRestoration(state: SessionState, window: number, summ
   if (sections.length === 0) return undefined
   const text = [
     "<restored-context>",
-    "The conversation was compacted. lodestar read the working context below fresh from disk right after the compaction. Use it instead of reading these files again, unless they may have changed since.",
+    "The conversation was compacted. lodestar read the files below fresh from disk right after the compaction, so you don't need to read them again unless they changed since. Other files you used earlier are listed by path only.",
     "",
     sections.join("\n\n"),
     "</restored-context>",
