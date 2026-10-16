@@ -7,7 +7,7 @@ import { recitation, staleFiles, staleNotice } from "./reminders"
 import type { SessionState } from "./state"
 
 let dir = ""
-const state = (): SessionState => ({ directory: dir, files: {}, notes: [], todo: [], skills: {}, toolStreak: 0, recited: false })
+const state = (): SessionState => ({ directory: dir, files: {}, notes: [], skills: {}, toolStreak: 0, recited: false })
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "lodestar-reminders-"))
@@ -21,8 +21,7 @@ test("asks for a recap after eight tool calls, once per run", () => {
   session.toolStreak = 7
   expect(recitation(session)).toBeUndefined()
   session.toolStreak = 8
-  session.todo = [{ text: "fix the parser", status: "in_progress" }]
-  expect(recitation(session)).toContain('1 in progress ("fix the parser")')
+  expect(recitation(session)).toContain("8 tool calls since you last wrote to the user")
   session.recited = true
   expect(recitation(session)).toBeUndefined()
 })

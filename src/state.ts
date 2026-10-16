@@ -15,13 +15,6 @@ export interface FileRecord {
   reported?: DiskState | "deleted"
 }
 
-export type TodoStatus = "pending" | "in_progress" | "done"
-
-export interface TodoItem {
-  text: string
-  status: TodoStatus
-}
-
 export interface SkillRecord {
   name: string
   text: string
@@ -42,7 +35,6 @@ export interface SessionState {
   directory?: string
   files: Record<string, FileRecord>
   notes: string[]
-  todo: TodoItem[]
   skills: Record<string, SkillRecord>
   /** Tool calls since the agent last wrote to the user. */
   toolStreak: number
@@ -54,7 +46,7 @@ export interface SessionState {
   snapshot?: Snapshot
 }
 
-const empty = (): SessionState => ({ files: {}, notes: [], todo: [], skills: {}, toolStreak: 0, recited: false })
+const empty = (): SessionState => ({ files: {}, notes: [], skills: {}, toolStreak: 0, recited: false })
 
 /** Per-session state, kept in memory and saved to plugin storage so it survives a restart. */
 export class Store {

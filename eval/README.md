@@ -20,7 +20,7 @@ Scenarios live in `scenarios/`, and the projects they copy live in `fixtures/`.
 | --- | --- |
 | `A` | OpenCode alone. The baseline. |
 | `B` | OpenCode with lodestar. |
-| `B-T3`, `B-T4`, `B-T5` | lodestar with one feature switched off, to measure what that feature adds. |
+| `B-T2`, `B-T3`, `B-T4`, `B-T6` | lodestar with one feature switched off, to measure what that feature adds. |
 
 ## Running
 
@@ -58,7 +58,7 @@ Each run directory keeps `work/` (the project after the run), `export.json` (the
 
 lodestar reads two environment variables that exist only for evaluation. They aren't user settings.
 
-- `LODESTAR_DISABLE=T3,T5` switches off the listed features.
+- `LODESTAR_DISABLE=T3,T4` switches off the listed features.
 - `LODESTAR_TRACE=<file>` appends one JSON line for everything lodestar adds to a request, with an estimate of its size in tokens.
 
 The harness sets them through the configurations above.

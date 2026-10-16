@@ -7,7 +7,7 @@ import { buildRestoration, describeRestoration, restoreBudget, summaryFromCheckp
 import type { SessionState } from "./state"
 
 let dir = ""
-const state = (): SessionState => ({ directory: dir, files: {}, notes: [], todo: [], skills: {}, toolStreak: 0, recited: false })
+const state = (): SessionState => ({ directory: dir, files: {}, notes: [], skills: {}, toolStreak: 0, recited: false })
 
 async function file(name: string, text: string, ageSeconds: number) {
   const target = path.join(dir, name)
@@ -58,12 +58,8 @@ describe("buildRestoration", () => {
     expect(restoration?.text).toContain("### big.ts\n\nNot restored: about")
   })
 
-  test("puts the todo list, notes, and skills back, newest skill first", async () => {
+  test("puts notes and skills back, newest skill first", async () => {
     const session = state()
-    session.todo = [
-      { text: "write tests", status: "done" },
-      { text: "fix the parser", status: "in_progress" },
-    ]
     session.notes = ["The tokenizer handles decimals now."]
     session.skills = {
       old: { name: "old", text: "Old skill body", at: 1 },
@@ -71,11 +67,9 @@ describe("buildRestoration", () => {
     }
     const restoration = await buildRestoration(session, 1_000_000, "key")
     const text = restoration?.text ?? ""
-    expect(text).toContain("- [x] write tests")
-    expect(text).toContain("- [~] fix the parser")
     expect(text).toContain("The tokenizer handles decimals now.")
     expect(text.indexOf("### Skill: new")).toBeLessThan(text.indexOf("### Skill: old"))
-    expect(restoration && describeRestoration(restoration)).toBe("lodestar restored the todo list, 2 skills after compaction (~1k tokens).")
+    expect(restoration && describeRestoration(restoration)).toBe("lodestar restored 2 skills after compaction (~1k tokens).")
   })
 
   test("returns nothing when there is nothing to restore", async () => {

@@ -43,11 +43,10 @@ test("drops the oldest entries but keeps the first user message when it must", (
   expect(text.length).toBeLessThanOrEqual(4_000 + 500)
 })
 
-test("the prompt asks for every section and carries the previous checkpoint and todo list", () => {
-  const prompt = summaryPrompt({ previous: "old checkpoint", todo: [{ text: "ship it", status: "pending" }], conversation: "talk" })
+test("the prompt asks for every section and carries the previous checkpoint", () => {
+  const prompt = summaryPrompt({ previous: "old checkpoint", conversation: "talk" })
   expect(prompt).toContain("## Rules from the user")
   expect(prompt).toContain("<previous-checkpoint>\nold checkpoint")
-  expect(prompt).toContain("- [ ] ship it")
   expect(looksLikeCheckpoint("## User requests\n## Rules from the user\n## Key facts\n## Files\n## Next step")).toBe(true)
   expect(looksLikeCheckpoint("Sure, here is a summary.")).toBe(false)
 })

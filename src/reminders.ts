@@ -1,19 +1,12 @@
 import path from "node:path"
 import { diskState, lastUsed } from "./files"
 import { RECITE_AFTER_TOOL_CALLS, STALE_CHECK_FILES } from "./limits"
-import type { SessionState, TodoItem } from "./state"
-
-function todoLine(items: readonly TodoItem[]) {
-  if (items.length === 0) return ""
-  const count = (status: TodoItem["status"]) => items.filter((item) => item.status === status).length
-  const current = items.find((item) => item.status === "in_progress")
-  return ` Your todo list has ${count("done")} done, ${count("in_progress")} in progress${current ? ` ("${current.text}")` : ""}, and ${count("pending")} pending.`
-}
+import type { SessionState } from "./state"
 
 /** T4: asks for a short recap after a long run of tool calls, once per run. */
 export function recitation(state: SessionState): string | undefined {
   if (state.toolStreak < RECITE_AFTER_TOOL_CALLS || state.recited) return undefined
-  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next.${todoLine(state.todo)}</lodestar-reminder>`
+  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next.</lodestar-reminder>`
 }
 
 /** T6: files that changed on disk after the agent last read or edited them, each reported once. */

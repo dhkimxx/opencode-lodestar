@@ -1,8 +1,6 @@
 import type { Message } from "@opencode/ai"
 import { SUMMARY_INPUT_SHARE, SUMMARY_MAX_INPUT_TOKENS, SUMMARY_TIMEOUT_MS } from "./limits"
 import { isCheckpoint, parts, textOf } from "./messages"
-import { formatTodo } from "./restore"
-import type { TodoItem } from "./state"
 import { estimateTokens } from "./tokens"
 
 const SECTIONS = [
@@ -17,7 +15,7 @@ const SECTIONS = [
   "## Errors and fixes",
   "Each error, quoted exactly, and what fixed it. Also what was tried and didn't work, so it isn't tried again.",
   "## Plan and progress",
-  "The plan or todo list, with the status of every item.",
+  "The plan or task list, if there is one, with the status of every item.",
   "## Current work",
   "What was being done right before this checkpoint, in detail.",
   "## Next step",
@@ -84,7 +82,7 @@ export function transcript(messages: readonly Message[], maxTokens: number) {
   return { previous, text: entries.map((entry) => entry.text).join("\n\n") }
 }
 
-export function summaryPrompt(input: { previous?: string; todo: readonly TodoItem[]; conversation: string }) {
+export function summaryPrompt(input: { previous?: string; conversation: string }) {
   return [
     "You are writing the checkpoint for a coding session. The conversation below will be removed, and the agent will continue from this checkpoint, the most recent messages, and fresh copies of the files it was working with. Anything you leave out is lost.",
     "",
@@ -96,7 +94,6 @@ export function summaryPrompt(input: { previous?: string; todo: readonly TodoIte
     ...(input.previous
       ? ["", "Carry everything that still matters from the previous checkpoint into the new one.", "<previous-checkpoint>", input.previous, "</previous-checkpoint>"]
       : []),
-    ...(input.todo.length > 0 ? ["", "<todo-list>", formatTodo(input.todo), "</todo-list>"] : []),
     "",
     "<conversation>",
     input.conversation,

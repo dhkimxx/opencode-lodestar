@@ -8,10 +8,9 @@ import { recitation, staleFiles, staleNotice } from "./reminders"
 import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
 import { estimateUsage, looksLikeCheckpoint, summaryInputTokens, summaryPrompt, transcript, withTimeout } from "./summary"
-import { parseTodo, TODO_DESCRIPTION, TODO_INPUT, TODO_TOOL, todoSummary } from "./todo"
 import { estimateTokens } from "./tokens"
 
-type Feature = "T2" | "T3" | "T4" | "T5" | "T6"
+type Feature = "T2" | "T3" | "T4" | "T6"
 type ModelRef = { readonly providerID: string; readonly id: string }
 
 /** Used when a model's context window can't be looked up. */
@@ -115,7 +114,7 @@ export default Plugin.define({
         if (!on("T3") || event.result) return
         const { previous, text } = transcript(event.messages, summaryInputTokens(await contextWindow(event.model)))
         if (!text.trim() && !previous) return
-        const prompt = summaryPrompt({ previous, todo: state.todo, conversation: text })
+        const prompt = summaryPrompt({ previous, conversation: text })
         const started = Date.now()
         const reply = await withTimeout(
           ctx.generate.text({ prompt, model: event.model }).catch((error: unknown) => {
@@ -178,28 +177,6 @@ export default Plugin.define({
         if (changed) store.save(event.sessionID)
       }),
     )
-
-    // T5: the todo tool, unless another plugin already provides one.
-    if (on("T5")) {
-      registrations.push(
-        await ctx.tool.transform((editor) => {
-          if (editor.get(TODO_TOOL) || editor.list().some((tool) => tool.name === TODO_TOOL)) return
-          editor.add({
-            name: TODO_TOOL,
-            description: TODO_DESCRIPTION,
-            input: TODO_INPUT,
-            execute: async (input, context) => {
-              const items = parseTodo(input)
-              const state = await store.get(context.sessionID)
-              state.todo = items
-              store.save(context.sessionID)
-              trace({ sessionID: context.sessionID, feature: "T5", items: items.length })
-              return { content: todoSummary(items) }
-            },
-          })
-        }),
-      )
-    }
 
     const abort = new AbortController()
     async function handle(event: { type: string; data?: Record<string, unknown> }) {

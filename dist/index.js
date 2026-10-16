@@ -110,17 +110,10 @@ function insertNearEnd(messages, message) {
 
 // src/reminders.ts
 import path2 from "path";
-function todoLine(items) {
-  if (items.length === 0)
-    return "";
-  const count = (status) => items.filter((item) => item.status === status).length;
-  const current = items.find((item) => item.status === "in_progress");
-  return ` Your todo list has ${count("done")} done, ${count("in_progress")} in progress${current ? ` ("${current.text}")` : ""}, and ${count("pending")} pending.`;
-}
 function recitation(state) {
   if (state.toolStreak < RECITE_AFTER_TOOL_CALLS || state.recited)
     return;
-  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next.${todoLine(state.todo)}</lodestar-reminder>`;
+  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next.</lodestar-reminder>`;
 }
 async function staleFiles(state) {
   const records = Object.values(state.files).filter((record) => record.seen).sort((a, b) => lastUsed(b) - lastUsed(a)).slice(0, STALE_CHECK_FILES);
@@ -174,11 +167,6 @@ function keepStart(text, tokens) {
 
 // src/restore.ts
 var PLAN_DIR = path3.join(homedir(), ".opencode", "plan");
-function formatTodo(items) {
-  const mark = { done: "x", in_progress: "~", pending: " " };
-  return items.map((item) => `- [${mark[item.status]}] ${item.text}`).join(`
-`);
-}
 function restoreBudget(compactedTokens, window) {
   const fromConversation = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (compactedTokens ?? 0));
   return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromConversation));
@@ -205,9 +193,6 @@ async function buildRestoration(state, window, summaryKey) {
     return true;
   };
   const relative = (file) => state.directory ? path3.relative(state.directory, file) || file : file;
-  const todo = state.todo.length > 0 && take(`## Todo list
-
-${formatTodo(state.todo)}`);
   if (state.notes.length > 0)
     take(`## Your latest progress notes
 
@@ -299,15 +284,13 @@ ${skillSections.join(`
     files,
     references,
     skills: skillSections.length,
-    plan,
-    todo
+    plan
   };
 }
 function describeRestoration(restoration) {
   const parts = [
     restoration.files > 0 ? `${restoration.files} file${restoration.files === 1 ? "" : "s"}` : undefined,
     restoration.plan ? "the plan" : undefined,
-    restoration.todo ? "the todo list" : undefined,
     restoration.skills > 0 ? `${restoration.skills} skill${restoration.skills === 1 ? "" : "s"}` : undefined
   ].filter(Boolean);
   const what = parts.length > 0 ? parts.join(", ") : "progress notes";
@@ -320,7 +303,7 @@ function summaryFromCheckpoint(text) {
 }
 
 // src/state.ts
-var empty = () => ({ files: {}, notes: [], todo: [], skills: {}, toolStreak: 0, recited: false });
+var empty = () => ({ files: {}, notes: [], skills: {}, toolStreak: 0, recited: false });
 
 class Store {
   storage;
@@ -381,7 +364,7 @@ var SECTIONS = [
   "## Errors and fixes",
   "Each error, quoted exactly, and what fixed it. Also what was tried and didn't work, so it isn't tried again.",
   "## Plan and progress",
-  "The plan or todo list, with the status of every item.",
+  "The plan or task list, if there is one, with the status of every item.",
   "## Current work",
   "What was being done right before this checkpoint, in detail.",
   "## Next step",
@@ -453,7 +436,6 @@ function summaryPrompt(input) {
     "",
     "Write facts, not commentary. Stay under 2,000 words. Don't call tools. Reply with the checkpoint only.",
     ...input.previous ? ["", "Carry everything that still matters from the previous checkpoint into the new one.", "<previous-checkpoint>", input.previous, "</previous-checkpoint>"] : [],
-    ...input.todo.length > 0 ? ["", "<todo-list>", formatTodo(input.todo), "</todo-list>"] : [],
     "",
     "<conversation>",
     input.conversation,
@@ -482,43 +464,6 @@ var estimateUsage = (prompt, reply) => ({
   reasoning: 0,
   cache: { read: 0, write: 0 }
 });
-
-// src/todo.ts
-var TODO_TOOL = "todo";
-var TODO_DESCRIPTION = [
-  "Keep a todo list for work with several steps, such as a task with three or more parts or a list from the user.",
-  "Send the whole list every time, one item per line: `[ ] item` for pending, `[~] item` for in progress, `[x] item` for done.",
-  "It replaces the previous list. Mark an item in progress when you start it and done when it is finished.",
-  "The list is shown back to you after the conversation is compacted."
-].join(" ");
-var TODO_INPUT = {
-  type: "object",
-  properties: {
-    list: { type: "string", description: "The whole list, one item per line, each starting with [ ], [~], or [x]." }
-  },
-  required: ["list"],
-  additionalProperties: false
-};
-var MARKS = { " ": "pending", "": "pending", "~": "in_progress", ">": "in_progress", x: "done", X: "done" };
-function parseTodo(input) {
-  const list = input?.list;
-  if (typeof list !== "string")
-    throw new Error("list must be a string, one item per line");
-  return list.split(`
-`).map((line) => line.trim()).filter(Boolean).map((line) => {
-    const match = line.match(/^(?:[-*]\s+)?\[([ xX~>]?)\]\s*(.*)$/);
-    const text = (match ? match[2] ?? "" : line.replace(/^[-*]\s+/, "")).trim();
-    if (!text)
-      throw new Error(`an item has no text: ${line}`);
-    return { text, status: MARKS[match?.[1] ?? " "] ?? "pending" };
-  });
-}
-function todoSummary(items) {
-  if (items.length === 0)
-    return "Todo list cleared.";
-  const count = (status) => items.filter((item) => item.status === status).length;
-  return `Todo list saved: ${count("done")} done, ${count("in_progress")} in progress, ${count("pending")} pending.`;
-}
 
 // src/index.ts
 var DEFAULT_WINDOW = 200000;
@@ -606,7 +551,7 @@ var src_default = Plugin.define({
       const { previous, text } = transcript(event.messages, summaryInputTokens(await contextWindow(event.model)));
       if (!text.trim() && !previous)
         return;
-      const prompt = summaryPrompt({ previous, todo: state.todo, conversation: text });
+      const prompt = summaryPrompt({ previous, conversation: text });
       const started = Date.now();
       const reply = await withTimeout(ctx.generate.text({ prompt, model: event.model }).catch((error) => {
         trace({ sessionID: event.sessionID, feature: "T3", event: "error", error: String(error) });
@@ -665,25 +610,6 @@ var src_default = Plugin.define({
       if (changed)
         store.save(event.sessionID);
     }));
-    if (on("T5")) {
-      registrations.push(await ctx.tool.transform((editor) => {
-        if (editor.get(TODO_TOOL) || editor.list().some((tool) => tool.name === TODO_TOOL))
-          return;
-        editor.add({
-          name: TODO_TOOL,
-          description: TODO_DESCRIPTION,
-          input: TODO_INPUT,
-          execute: async (input, context) => {
-            const items = parseTodo(input);
-            const state = await store.get(context.sessionID);
-            state.todo = items;
-            store.save(context.sessionID);
-            trace({ sessionID: context.sessionID, feature: "T5", items: items.length });
-            return { content: todoSummary(items) };
-          }
-        });
-      }));
-    }
     const abort = new AbortController;
     async function handle(event) {
       const data = event.data ?? {};

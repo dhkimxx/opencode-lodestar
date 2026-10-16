@@ -12,7 +12,7 @@ import {
   RESTORE_SKILL_TOKENS,
   RESTORE_SKILLS_TOTAL,
 } from "./limits"
-import type { SessionState, Snapshot, TodoItem } from "./state"
+import type { SessionState, Snapshot } from "./state"
 import { estimateTokens, keepStart } from "./tokens"
 
 /** Where OpenCode's plan mode writes plans. */
@@ -23,12 +23,6 @@ export interface Restoration extends Snapshot {
   references: number
   skills: number
   plan: boolean
-  todo: boolean
-}
-
-export function formatTodo(items: readonly TodoItem[]): string {
-  const mark = { done: "x", in_progress: "~", pending: " " } as const
-  return items.map((item) => `- [${mark[item.status]}] ${item.text}`).join("\n")
 }
 
 /** The budget grows with the conversation that was compacted, within fixed bounds. */
@@ -69,7 +63,6 @@ export async function buildRestoration(state: SessionState, window: number, summ
   }
   const relative = (file: string) => (state.directory ? path.relative(state.directory, file) || file : file)
 
-  const todo = state.todo.length > 0 && take(`## Todo list\n\n${formatTodo(state.todo)}`)
   if (state.notes.length > 0) take(`## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
 
   const records = Object.values(state.files)
@@ -149,7 +142,6 @@ export async function buildRestoration(state: SessionState, window: number, summ
     references,
     skills: skillSections.length,
     plan,
-    todo,
   }
 }
 
@@ -157,7 +149,6 @@ export function describeRestoration(restoration: Restoration): string {
   const parts = [
     restoration.files > 0 ? `${restoration.files} file${restoration.files === 1 ? "" : "s"}` : undefined,
     restoration.plan ? "the plan" : undefined,
-    restoration.todo ? "the todo list" : undefined,
     restoration.skills > 0 ? `${restoration.skills} skill${restoration.skills === 1 ? "" : "s"}` : undefined,
   ].filter(Boolean)
   const what = parts.length > 0 ? parts.join(", ") : "progress notes"

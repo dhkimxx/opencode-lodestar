@@ -13,9 +13,10 @@ const REPO = path.resolve(import.meta.dir, "..")
 const CONFIGS: Record<string, { plugin: boolean; disable?: string }> = {
   A: { plugin: false },
   B: { plugin: true },
+  "B-T2": { plugin: true, disable: "T2" },
   "B-T3": { plugin: true, disable: "T3" },
   "B-T4": { plugin: true, disable: "T4" },
-  "B-T5": { plugin: true, disable: "T5" },
+  "B-T6": { plugin: true, disable: "T6" },
 }
 
 /** Context windows of the models we evaluate with, from `opencode api model.list`. */
@@ -185,10 +186,14 @@ async function runOne(
 }
 
 async function stopAll() {
-  await Promise.all([...running].map(async (instance) => {
-    await instance.stop()
-    await instance.cleanup()
-  }))
+  await Promise.allSettled(
+    [...running].map(async (instance) => {
+      // Credentials go first, in case a server is slow to stop.
+      await instance.cleanup()
+      await Promise.race([instance.stop(), Bun.sleep(5_000)])
+      await instance.cleanup()
+    }),
+  )
   process.exit(130)
 }
 process.on("SIGINT", stopAll)
@@ -208,7 +213,13 @@ async function worker() {
   for (;;) {
     const job = jobs[next++]
     if (!job) return
-    const result = await runOne(job.config, job.scenario, job.repeat, credentials)
+    let result = await runOne(job.config, job.scenario, job.repeat, credentials)
+    // Free models are rate limited. A limited run says nothing about the agent, so wait and run it again.
+    for (let attempt = 1; attempt <= 3 && /rate limit/i.test(result.error ?? ""); attempt++) {
+      console.log(`${job.config.name} ${job.scenario.id} #${job.repeat}: rate limited, retrying in ${attempt} minute(s)`)
+      await Bun.sleep(attempt * 60_000)
+      result = await runOne(job.config, job.scenario, job.repeat, credentials)
+    }
     await appendFile(path.join(out, "results.jsonl"), JSON.stringify(result) + "\n")
     const status = !result.ok ? `error: ${result.error}` : result.check?.success ? "success" : "fail"
     const tokens = result.metrics ? result.metrics.tokens.input + result.metrics.tokens.cacheRead : 0
