@@ -83,3 +83,37 @@ for (const name of [...totals.keys()].sort()) {
   const [model = "", config = ""] = name.split("\u0000")
   console.log(line(model, config, "all", summarize(totals.get(name) ?? [])))
 }
+
+// A against B, per model, with the change in each metric.
+const change = (before: number, after: number) =>
+  before === 0 ? (after === 0 ? "0%" : "new") : `${after >= before ? "+" : ""}${Math.round(((after - before) / before) * 100)}%`
+const models = [...new Set(results.map((result) => result.model))].sort()
+for (const model of models) {
+  const a = totals.get(key(model, "A"))
+  const b = totals.get(key(model, "B"))
+  if (!a || !b) continue
+  const before = summarize(a)
+  const after = summarize(b)
+  console.log(`\n## A against B: ${model}\n`)
+  console.log("| Metric | A (OpenCode alone) | B (with lodestar) | Change |")
+  console.log("| --- | --- | --- | --- |")
+  console.log(`| Runs that counted | ${before.runs - before.errors} of ${before.runs} | ${after.runs - after.errors} of ${after.runs} | |`)
+  console.log(`| Success | ${percent(before.success)} | ${percent(after.success)} | |`)
+  console.log(`| Violations | ${before.violations} | ${after.violations} | |`)
+  const rows: [string, number, number, (value: number) => string][] = [
+    ["Prompt tokens per run", before.promptTokens, after.promptTokens, thousands],
+    ["Output tokens per run", before.outputTokens, after.outputTokens, thousands],
+    ["Files read again after compaction", before.rereadsAfterCompaction, after.rereadsAfterCompaction, (value) => value.toFixed(1)],
+    ["Failed edits", before.failedEdits, after.failedEdits, (value) => value.toFixed(1)],
+    ["Repeated edits", before.repeatedEdits, after.repeatedEdits, (value) => value.toFixed(1)],
+    ["Minutes per run", before.minutes, after.minutes, (value) => value.toFixed(1)],
+  ]
+  for (const [name, x, y, format] of rows) console.log(`| ${name} | ${format(x)} | ${format(y)} | ${change(x, y)} |`)
+  console.log(`| Prompt cache hit rate | ${percent(before.cacheHitRate)} | ${percent(after.cacheHitRate)} | ${Math.round((after.cacheHitRate - before.cacheHitRate) * 100)} points |`)
+}
+
+const errors = results.filter((result) => !result.ok)
+if (errors.length > 0) {
+  console.log("\n## Runs that didn't count\n")
+  for (const result of errors) console.log(`- ${result.model} ${result.config} ${result.scenario} #${result.repeat}: ${result.error}`)
+}
