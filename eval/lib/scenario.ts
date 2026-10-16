@@ -50,7 +50,9 @@ const unescapeXml = (text: string) =>
 /** Runs `bun test` in the workdir and reads every test's result from a JUnit report. `bun` must be on PATH. */
 export async function runTests(workdir: string, files: string[] = []): Promise<TestRun> {
   const report = path.join(tmpdir(), `eval-junit-${crypto.randomUUID()}.xml`)
-  const proc = Bun.spawn(["bun", "test", "--reporter=junit", `--reporter-outfile=${report}`, ...files], {
+  // A plain run skips the hidden tests a previous check left behind.
+  const scope = files.length > 0 ? files : ["--path-ignore-patterns=.eval-hidden/**"]
+  const proc = Bun.spawn(["bun", "test", "--reporter=junit", `--reporter-outfile=${report}`, ...scope], {
     cwd: workdir,
     stdin: "ignore",
     stdout: "pipe",

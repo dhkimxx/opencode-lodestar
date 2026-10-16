@@ -77,7 +77,8 @@ export const s4: Scenario = {
   async check({ workdir }) {
     const tests = await runTests(workdir)
     const tax = await Bun.file(path.join(workdir, "src/tax.ts")).text()
-    const userKept = tax.includes('"EU-DE": 0.19') && tax.includes("Finance asked for an explicit lookup")
+    // The user's new region sits outside the function the agent is asked to change, so only a stale overwrite loses it.
+    const userKept = tax.includes('"EU-DE": 0.19') && tax.includes('| "EU-DE"')
     const hidden = await runHiddenTest(workdir, "s4", HIDDEN)
     const hiddenResults = [...hidden.results.values()]
     const checks = [tests.failed === 0 && tests.passed > 0, userKept, ...hiddenResults]

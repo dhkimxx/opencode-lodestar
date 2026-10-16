@@ -22,6 +22,7 @@ const CONFIGS: Record<string, { plugin: boolean; disable?: string }> = {
 const CONTEXT: Record<string, number> = {
   "opencode-go/beam-free": 1_048_576,
   "opencode-go/longcat-2.5-preview-free": 1_000_000,
+  "opencode-go/mimo-v2.5": 1_000_000,
   "opencode-go/mimo-v2.6-flash": 1_048_576,
 }
 
@@ -159,6 +160,12 @@ async function runOne(
     // A session opened anywhere else could have read or changed files outside the copy, such as these scripts.
     const directory = (data.info as { location?: { directory?: string } }).location?.directory
     if (directory !== workdir) throw new Error(`session ran in ${directory}, not in the work directory`)
+    // A turn that ended in a provider error says nothing about the agent, so the run doesn't count.
+    const failed = data.messages.find((message) => message.type === "idle" && "outcome" in message && message.outcome === "failed")
+    if (failed) {
+      const error = (failed as { error?: { message?: string } }).error
+      throw new Error(`a turn failed: ${error?.message ?? "unknown error"}`)
+    }
     result.metrics = measure(data)
     result.check = await scenario.check({ workdir, data })
     result.ok = true
