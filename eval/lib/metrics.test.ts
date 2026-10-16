@@ -83,4 +83,6 @@ test("finds tool calls that reach outside the project into the user's home", () 
     "/home/me/workspace",
     "/home/me/workspace/other-repo/README.md",
   ])
+  const bun: SessionExport = { ...data, messages: [assistant(2, tool("shell", { command: "/home/me/.cache/ws/bin/bun test" }))] }
+  expect(outsideAccess(bun, "/home/me/.cache/ws/ab12/project", "/home/me", ["/home/me/.cache/ws/bin"])).toEqual([])
 })

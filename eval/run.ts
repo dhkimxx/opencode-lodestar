@@ -179,7 +179,7 @@ async function runOne(
     // A session opened anywhere else could have read or changed files outside the copy, such as these scripts.
     const directory = (data.info as { location?: { directory?: string } }).location?.directory
     if (directory !== workdir) throw new Error(`session ran in ${directory}, not in the work directory`)
-    const outside = outsideAccess(data, workdir, homedir())
+    const outside = outsideAccess(data, workdir, homedir(), [bunDir])
     if (outside.length > 0) throw new Error(`the agent left its project: ${outside.slice(0, 3).join(", ")}`)
     // A turn that ended in a provider error says nothing about the agent, so the run doesn't count.
     const failed = data.messages.find((message) => message.type === "idle" && "outcome" in message && message.outcome === "failed")

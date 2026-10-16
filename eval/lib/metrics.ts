@@ -133,7 +133,7 @@ export function measure(data: SessionExport): Metrics {
 }
 
 /** Paths under the user's home that a tool call touched outside the project, like another repository. */
-export function outsideAccess(data: SessionExport, workdir: string, home: string): string[] {
+export function outsideAccess(data: SessionExport, workdir: string, home: string, allowed: string[] = []): string[] {
   const found = new Set<string>()
   for (const message of data.messages) {
     if (!isAssistant(message)) continue
@@ -144,7 +144,7 @@ export function outsideAccess(data: SessionExport, workdir: string, home: string
         if (typeof value !== "string") continue
         for (const match of value.matchAll(/(?:^|[\s'"=(])(\/[^\s'"`;|&)]+)/g)) {
           const file = match[1] ?? ""
-          if (file.startsWith(home) && !file.startsWith(workdir)) found.add(file)
+          if (file.startsWith(home) && !file.startsWith(workdir) && !allowed.some((dir) => file.startsWith(dir))) found.add(file)
         }
       }
     }
