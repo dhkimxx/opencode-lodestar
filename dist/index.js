@@ -280,6 +280,7 @@ ${skillSections.join(`
   const text = [
     "<restored-context>",
     "The conversation was compacted. lodestar read the files below fresh from disk right after the compaction, so you don't need to read them again unless they changed since. Other files you used earlier are listed by path only.",
+    "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
     "",
     sections.join(`
 
