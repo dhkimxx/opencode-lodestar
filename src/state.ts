@@ -34,9 +34,8 @@ export interface Snapshot {
   at: number
   /** Hash of the summary it was made for. A newer checkpoint needs a new snapshot. */
   summaryKey: string
-  /** The one line shown in the conversation, such as "lodestar restored 3 files". */
+  /** A one-line description for the trace, such as "lodestar restored 3 files". */
   note?: string
-  announced?: boolean
 }
 
 export interface SessionState {

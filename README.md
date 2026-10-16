@@ -4,10 +4,6 @@ Keeps [OpenCode](https://opencode.ai) on track through compaction.
 
 When a long session fills the context window, OpenCode replaces the conversation with a summary. Work that lived only in the conversation, like the files the agent was editing and the plan it was following, gets lost, and the agent spends the next steps reading it all again. lodestar puts that work back right after compaction and writes a fuller summary, so the agent picks up where it left off.
 
-```text
-lodestar restored 5 files, the todo list after compaction (~6k tokens).
-```
-
 ## Features
 
 - **Puts the work back.** Right after a compaction, the agent gets fresh copies of the files it was working with (up to five), its plan, its todo list, its latest progress notes, and the skills it had loaded.
@@ -57,7 +53,7 @@ To update, run `git pull` in that folder.
 
 ## Usage
 
-There is nothing to do. lodestar works whenever OpenCode compacts a session, whether automatically or through `/compact`. After each compaction, one line in the conversation says what was put back.
+There is nothing to do. lodestar works whenever OpenCode compacts a session, whether automatically or through `/compact`. It adds nothing to the conversation you see: what it puts back goes only to the model.
 
 ## How it works
 

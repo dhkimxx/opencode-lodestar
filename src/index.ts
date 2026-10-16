@@ -223,13 +223,11 @@ export default Plugin.define({
         state.skills[data.name] = { name: data.name, text: data.text, at: Date.now() }
         store.save(sessionID)
       }
+      // Built here so it's ready for the first request after the compaction. It isn't announced with a message in the
+      // session: OpenCode counts such a message as a new exchange, keeps the turn before it as serialized text in the
+      // next checkpoint, and in evaluation that text led a model to break its own tool calls.
       if (event.type === "session.compaction.ended" && on("T2") && typeof data.text === "string") {
-        const snapshot = await ensureSnapshot(sessionID, data.text, data.model as ModelRef | undefined)
-        if (snapshot?.note && !snapshot.announced) {
-          snapshot.announced = true
-          store.save(sessionID)
-          await ctx.session.synthetic({ sessionID: sessionID as never, text: snapshot.note, resume: false }).catch(() => {})
-        }
+        await ensureSnapshot(sessionID, data.text, data.model as ModelRef | undefined)
       }
     }
     void (async () => {

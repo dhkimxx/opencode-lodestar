@@ -1,46 +1,40 @@
 import type { TodoItem, TodoStatus } from "./state"
 
-const STATUSES: readonly TodoStatus[] = ["pending", "in_progress", "done"]
-
 export const TODO_TOOL = "todo"
 
 export const TODO_DESCRIPTION = [
   "Keep a todo list for work with several steps, such as a task with three or more parts or a list from the user.",
-  "Send the whole list every time. It replaces the previous one.",
-  "Mark an item in_progress when you start it and done when it is finished.",
+  "Send the whole list every time, one item per line: `[ ] item` for pending, `[~] item` for in progress, `[x] item` for done.",
+  "It replaces the previous list. Mark an item in progress when you start it and done when it is finished.",
   "The list is shown back to you after the conversation is compacted.",
 ].join(" ")
 
+// One string, not an array of objects. In evaluation, a model that writes tool calls in XML started breaking its
+// tool calls once a tool with nested parameters was offered.
 export const TODO_INPUT = {
   type: "object",
   properties: {
-    items: {
-      type: "array",
-      description: "The full list, in order.",
-      items: {
-        type: "object",
-        properties: {
-          text: { type: "string", description: "What the item is, in a few words." },
-          status: { type: "string", enum: STATUSES },
-        },
-        required: ["text", "status"],
-        additionalProperties: false,
-      },
-    },
+    list: { type: "string", description: "The whole list, one item per line, each starting with [ ], [~], or [x]." },
   },
-  required: ["items"],
+  required: ["list"],
   additionalProperties: false,
 } as const
 
+const MARKS: Record<string, TodoStatus> = { " ": "pending", "": "pending", "~": "in_progress", ">": "in_progress", x: "done", X: "done" }
+
 export function parseTodo(input: unknown): TodoItem[] {
-  const items = (input as { items?: unknown } | undefined)?.items
-  if (!Array.isArray(items)) throw new Error("items must be an array")
-  return items.map((item, index) => {
-    const { text, status } = (item ?? {}) as { text?: unknown; status?: unknown }
-    if (typeof text !== "string" || !text.trim()) throw new Error(`item ${index + 1} needs text`)
-    if (!STATUSES.includes(status as TodoStatus)) throw new Error(`item ${index + 1} has an unknown status: ${String(status)}`)
-    return { text: text.trim(), status: status as TodoStatus }
-  })
+  const list = (input as { list?: unknown } | undefined)?.list
+  if (typeof list !== "string") throw new Error("list must be a string, one item per line")
+  return list
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(?:[-*]\s+)?\[([ xX~>]?)\]\s*(.*)$/)
+      const text = (match ? (match[2] ?? "") : line.replace(/^[-*]\s+/, "")).trim()
+      if (!text) throw new Error(`an item has no text: ${line}`)
+      return { text, status: MARKS[match?.[1] ?? " "] ?? "pending" }
+    })
 }
 
 export function todoSummary(items: readonly TodoItem[]): string {
