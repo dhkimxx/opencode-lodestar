@@ -1,0 +1,43 @@
+{
+  "name": "@dhkimxx/opencode-lodestar",
+  "version": "0.0.0",
+  "description": "Keeps OpenCode on track through compaction. Restores recent files, plans, and skills, and writes fuller summaries.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "compaction",
+    "context"
+  ],
+  "homepage": "https://github.com/dhkimxx/opencode-lodestar#readme",
+  "bugs": {
+    "url": "https://github.com/dhkimxx/opencode-lodestar/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhkimxx/opencode-lodestar.git"
+  },
+  "license": "MIT",
+  "author": "dhkimxx",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "index.js"
+  ],
+  "scripts": {
+    "bundle": "bun run scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --path-ignore-patterns='eval/fixtures/**'",
+    "check": "bun run typecheck && bun run test && bun run bundle"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.27",
+    "@types/bun": "1.4.3",
+    "typescript": "5.9.3"
+  }
+}
