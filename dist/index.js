@@ -186,6 +186,13 @@ function restoreBudget(compactedTokens, window) {
 var numbered = (text) => text.split(`
 `).map((line, index) => `${index + 1}: ${line}`).join(`
 `);
+function fenced(text) {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}
+${text}
+${fence}`;
+}
 async function buildRestoration(state, window, summaryKey) {
   let budget = restoreBudget(state.compactedTokens, window);
   const sections = [];
@@ -223,16 +230,18 @@ ${keepStart(planText, RESTORE_PLAN_TOKENS)}`);
       continue;
     const content = numbered(text);
     const tokens = estimateTokens(content);
-    const full = `<file path="${relative(record.path)}">
-${content}
-</file>`;
+    const full = `### ${relative(record.path)}
+
+${fenced(content)}`;
     if (tokens <= RESTORE_FILE_TOKENS && estimateTokens(full) <= budget) {
       budget -= estimateTokens(full);
       fileSections.push(full);
       files++;
       continue;
     }
-    const reference = `<file path="${relative(record.path)}" restored="no">About ${tokens} tokens, too large to restore. Read it again if you need it.</file>`;
+    const reference = `### ${relative(record.path)}
+
+Not restored: about ${tokens} tokens, too large. Read it again if you need it.`;
     if (estimateTokens(reference) <= budget) {
       budget -= estimateTokens(reference);
       fileSections.push(reference);
@@ -251,9 +260,9 @@ ${fileSections.join(`
   const skillSections = [];
   let skillBudget = RESTORE_SKILLS_TOTAL;
   for (const skill of Object.values(state.skills).sort((a, b) => b.at - a.at)) {
-    const body = `<skill name="${skill.name}">
-${keepStart(skill.text, RESTORE_SKILL_TOKENS)}
-</skill>`;
+    const body = `### Skill: ${skill.name}
+
+${keepStart(skill.text, RESTORE_SKILL_TOKENS)}`;
     const tokens = estimateTokens(body);
     if (tokens > skillBudget || tokens > budget)
       break;

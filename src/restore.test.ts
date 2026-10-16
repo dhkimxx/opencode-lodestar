@@ -43,9 +43,9 @@ describe("buildRestoration", () => {
     }
     const restoration = await buildRestoration(session, 1_000_000, "key")
     expect(restoration?.files).toBe(5)
-    expect(restoration?.text).toContain('<file path="f6.ts">')
-    expect(restoration?.text).toContain("1: export const value6 = 6")
-    expect(restoration?.text).not.toContain('<file path="f1.ts">')
+    expect(restoration?.text).toContain("### f6.ts\n\n```\n1: export const value6 = 6")
+    expect(restoration?.text).not.toContain("### f1.ts")
+    expect(restoration?.text).not.toMatch(/<file|path="/)
   })
 
   test("refers to a file that is too large instead of restoring it", async () => {
@@ -55,7 +55,7 @@ describe("buildRestoration", () => {
     const restoration = await buildRestoration(session, 1_000_000, "key")
     expect(restoration?.files).toBe(0)
     expect(restoration?.references).toBe(1)
-    expect(restoration?.text).toContain('restored="no"')
+    expect(restoration?.text).toContain("### big.ts\n\nNot restored: about")
   })
 
   test("puts the todo list, notes, and skills back, newest skill first", async () => {
@@ -74,7 +74,7 @@ describe("buildRestoration", () => {
     expect(text).toContain("- [x] write tests")
     expect(text).toContain("- [~] fix the parser")
     expect(text).toContain("The tokenizer handles decimals now.")
-    expect(text.indexOf('<skill name="new">')).toBeLessThan(text.indexOf('<skill name="old">'))
+    expect(text.indexOf("### Skill: new")).toBeLessThan(text.indexOf("### Skill: old"))
     expect(restoration && describeRestoration(restoration)).toBe("lodestar restored the todo list, 2 skills after compaction (~1k tokens).")
   })
 
@@ -92,4 +92,12 @@ test("summaries that share an opening still get different keys", () => {
   const opening = "## User requests\n" + "x".repeat(400)
   expect(summaryKeyOf(`${opening}\nfirst`)).not.toBe(summaryKeyOf(`${opening}\nsecond`))
   expect(summaryKeyOf(" same ")).toBe(summaryKeyOf("same"))
+})
+
+test("a file containing backticks gets a longer fence", async () => {
+  const session = state()
+  await file("notes.md", "```ts\ncode\n```\n", 1)
+  await recordTool(session, { tool: "read", input: { path: "notes.md" }, output: undefined, directory: dir, now: 1 })
+  const restoration = await buildRestoration(session, 1_000_000, "key")
+  expect(restoration?.text).toContain("### notes.md\n\n````\n1: ```ts")
 })

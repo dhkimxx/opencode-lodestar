@@ -44,6 +44,16 @@ const numbered = (text: string) =>
     .join("\n")
 
 /**
+ * A fenced block that the content can't close early. Markdown, not XML: some models write their tool calls in
+ * XML, and XML-looking context such as `<file path="…">` leaked into their tool arguments during evaluation.
+ */
+function fenced(text: string) {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = "`".repeat(Math.max(3, longest + 1))
+  return `${fence}\n${text}\n${fence}`
+}
+
+/**
  * Builds what goes back into the conversation after a compaction, read fresh from disk.
  * Returns undefined when there is nothing worth restoring.
  */
@@ -87,14 +97,14 @@ export async function buildRestoration(state: SessionState, window: number, summ
     if (text === undefined) continue
     const content = numbered(text)
     const tokens = estimateTokens(content)
-    const full = `<file path="${relative(record.path)}">\n${content}\n</file>`
+    const full = `### ${relative(record.path)}\n\n${fenced(content)}`
     if (tokens <= RESTORE_FILE_TOKENS && estimateTokens(full) <= budget) {
       budget -= estimateTokens(full)
       fileSections.push(full)
       files++
       continue
     }
-    const reference = `<file path="${relative(record.path)}" restored="no">About ${tokens} tokens, too large to restore. Read it again if you need it.</file>`
+    const reference = `### ${relative(record.path)}\n\nNot restored: about ${tokens} tokens, too large. Read it again if you need it.`
     if (estimateTokens(reference) <= budget) {
       budget -= estimateTokens(reference)
       fileSections.push(reference)
@@ -109,7 +119,7 @@ export async function buildRestoration(state: SessionState, window: number, summ
   const skillSections: string[] = []
   let skillBudget = RESTORE_SKILLS_TOTAL
   for (const skill of Object.values(state.skills).sort((a, b) => b.at - a.at)) {
-    const body = `<skill name="${skill.name}">\n${keepStart(skill.text, RESTORE_SKILL_TOKENS)}\n</skill>`
+    const body = `### Skill: ${skill.name}\n\n${keepStart(skill.text, RESTORE_SKILL_TOKENS)}`
     const tokens = estimateTokens(body)
     if (tokens > skillBudget || tokens > budget) break
     skillBudget -= tokens
