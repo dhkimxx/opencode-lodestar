@@ -13,6 +13,5 @@
     "noUncheckedIndexedAccess": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "scripts", "eval", "index.js"],
-  "exclude": ["eval/fixtures"]
+  "include": ["src", "scripts", "eval", "index.js"]
 }

@@ -1,65 +1,81 @@
 # Evaluation
 
-These scripts measure whether lodestar helps an agent continue its work after compaction, and what it costs. Each run drives a real OpenCode session through a short task, compacts it at fixed points, and checks the result with tests the agent never saw.
+These scripts measure whether lodestar helps an agent keep working after compaction, and what it costs. They run tasks from [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os) V2 through OpenCode, once without lodestar (`A`) and once with it (`B`), and compare the two run by run. These tasks are real issues in real repositories, long enough that sessions compact while the agent works.
 
-## Scenarios
+Each run follows the benchmark's own protocol:
 
-| ID | Fixture | What it checks |
-| --- | --- | --- |
-| S1 | `ledger` | Two rules given in the first message still hold after two compactions, when a later task tempts the agent to break them. |
-| S2 | `router` | Conventions the agent read before a compaction are followed when it adds a route after it. |
-| S3 | `textkit` | A six-item plan given once is carried out across three turns, with a compaction between each. |
-| S4 | `ledger` | A file the user changed between turns is re-read before it is edited, not overwritten. |
-| S5 | `calc` | Three bugs are fixed one per turn, with a compaction between turns, without repeating failed attempts. |
+- **The agent works inside the task's container**, so its commands run in the task's environment. OpenCode, ripgrep, and this repository are mounted read-only. Alpine images get OpenCode's musl build.
+- **The network is closed while the agent works.** Task containers sit on an internal Docker network, `lodestar-eval`. Their only way out is a Squid proxy, `lodestar-eval-proxy`, that allows the model APIs and nothing else (`squid.conf`). Web search is off.
+- **The agent gets 50 minutes.** When time runs out, its partial work is graded.
+- **Grading happens in a fresh container.** The agent's diff is applied there and the task's own verifier runs. Grading has normal network access, since some Go tasks fetch modules during tests.
 
-Scenarios live in `scenarios/`, and the projects they copy live in `fixtures/`.
+Results for the current release are in [results/v0.1.0.md](results/v0.1.0.md).
 
-## Configurations
+## Setup
 
-| Name | Meaning |
-| --- | --- |
-| `A` | OpenCode alone. The baseline. |
-| `B` | OpenCode with lodestar. |
-| `B-T2`, `B-T4`, `B-T6` | lodestar with one feature switched off, to measure what that feature adds. |
+1. Docker, and ripgrep at `~/.cache/opencode/bin/rg`. OpenCode downloads ripgrep the first time it searches.
+2. The tasks:
+
+   ```sh
+   git clone --depth 1 https://github.com/scaleapi/SWE-bench_Pro-os ~/.cache/lodestar-eval/SWE-bench_Pro-os
+   ```
+
+3. Credentials. OpenCode Go models use the key from your own OpenCode. OpenAI models need a separate login made only for evaluation. ChatGPT refresh tokens work once, so a copy of your own login that refreshes would sign you out.
+
+   ```sh
+   D=~/.local/share/lodestar-eval/openai
+   mkdir -p $D && chmod 700 $D
+   XDG_DATA_HOME=$D/data XDG_CONFIG_HOME=$D/config XDG_STATE_HOME=$D/state XDG_CACHE_HOME=$D/cache \
+     opencode auth login openai --standalone --method chatgpt-headless
+   ```
+
+   Its access token lasts ten days. The runner refuses to start when less than a day is left, because each container holds a copy, and a copy that refreshed the token would invalidate the others.
 
 ## Running
 
-You need OpenCode 2 at `~/.opencode/bin/opencode` (or set `OPENCODE_BIN`), Bun, git, and a signed-in OpenCode Go account.
-
 ```sh
-bun eval/run.ts --configs A,B --scenarios S1,S2,S3,S4,S5 --repeat 3 --concurrency 3
-bun eval/report.ts eval/.runs/<run>/results.jsonl
+bun eval/run.ts --tasks eval/tasks.json \
+  --models 'opencode-go/glm-5.3-flash#high,openai/gpt-6.1-sol#high' --configs A,B --concurrency 3 --prune-images
 ```
 
-| Option | Default | Meaning |
+| Option | Default | What it does |
 | --- | --- | --- |
-| `--configs` | `A` | Comma-separated configurations. |
-| `--scenarios` | all | Comma-separated scenario IDs. |
-| `--repeat` | `1` | Runs per configuration and scenario. |
-| `--model` | `opencode-go/beam-free` | Model for every session. |
-| `--context` | from a built-in table | The model's context window, in tokens. |
-| `--threshold` | `60000` | Automatic compaction starts at this many tokens. |
-| `--concurrency` | `2` | Runs at the same time. |
-| `--turn-timeout` | 15 minutes | Time limit for one turn, in milliseconds. |
-| `--bun-dir` | the directory of `bun` on `PATH` | Put on the agent's `PATH`, so it can run the tests. Keep it somewhere that names nothing about your projects. |
-| `--out` | `eval/.runs/<time>` | Output directory. |
+| `--tasks` | | Comma-separated task IDs, or a JSON file with an array of them. |
+| `--models` | `opencode-go/glm-5.3-flash#high` | Comma-separated models, with the reasoning variant after `#`. |
+| `--configs` | `A,B` | `A` is OpenCode alone, `B` is OpenCode with lodestar. `B-T2`, `B-T4`, and `B-T6` switch off one feature, to measure what it adds. |
+| `--threshold` | `50000` | Auto compaction starts at this many tokens. |
+| `--budget` | `50` | Minutes the agent gets. |
+| `--concurrency` | `3` | Runs at a time. Each container may use up to 6 GB of memory. |
+| `--prune-images` | off | Removes each task's image once all of its runs are done. The images are several GB each. |
+| `--out` | `eval/.runs/<time>` | Where runs are written. Run again with the same directory to finish what is left: runs that already counted are skipped. |
 
-## How a run works
+The threshold is far below the models' windows, which run from 272k to 1M tokens, because these sessions rarely grow that large: 151 of the 240 runs in the latest results never reached 50,000 tokens. At a realistic threshold, almost none would compact.
 
-1. The fixture is copied into a fresh git repository under `~/.cache/ws/<random>/project`. The agent sees this path, so it names nothing that could lead the agent to this repository or your other projects.
-2. A private OpenCode server starts with its own data, config, state, and cache directories. Your OpenCode Go credentials are copied into them in memory, and the directories are deleted when the run ends. Nothing touches your own OpenCode setup.
-3. Automatic compaction is set to start at `--threshold` tokens, through the `compaction.buffer` setting, so that short tasks still compact mid-task. Other compaction settings keep their defaults.
-4. Each step sends a message with `opencode run`, compacts through the `session.compact` API, or edits files the way a user would between turns.
-5. The session is exported, metrics are computed from it, and the scenario's hidden tests run in the work directory.
-6. A run doesn't count if the session ended in a provider error, if the agent touched files in your home directory outside its project, or if the fixtures in this repository changed. Changed fixtures are restored from git.
+Each run reads its model's limits inside the container, with the run's own login, because they depend on it: through a ChatGPT login, OpenAI models accept less than through the API.
 
-Each run directory keeps `work/` (the project after the run), `export.json` (the session), `result.json` (metrics and checks), `turn-<n>.jsonl` (OpenCode's event output), and the server logs.
+A run that fails for reasons outside the agent doesn't count, such as a provider error or a failed image download. Running again with the same `--out` redoes it. Rate-limited runs wait and retry, and ChatGPT usage limits get waits of up to five hours.
 
-## Development switches
+## Output
+
+Each run directory keeps `turn.jsonl` (the agent's events), `export.json` (the session), `model.patch`, `verifier.log`, `reward.txt`, `trace.jsonl` (B only), and `result.json`. `results.jsonl` holds one line per run.
+
+## Tools
+
+- `compare.ts` pairs A and B runs of the same task and model, and reports the mean difference in each measure with a 95% bootstrap interval. It reports all pairs, and separately the pairs where a compaction happened, since lodestar only restores after one. Pass `--tasks` to list every pair.
+- `regrade.ts` grades finished runs again from their saved patches, for example after a fix to grading. The agents don't run again.
+- `select.ts` makes `tasks.json`: three tasks from each repository except `tutao/tutanota`, which has only four tasks. They come from the tasks that touch at least three files and are not in the HARD-51 subset, which most model families fail. In each repository, the three picked are the ones whose reference patch size is closest to that repository's 80th percentile. That makes them long but still solvable.
+
+## Evaluation switches
 
 lodestar reads two environment variables that exist only for evaluation. They aren't user settings.
 
-- `LODESTAR_DISABLE=T4,T6` switches off the listed features.
-- `LODESTAR_TRACE=<file>` appends one JSON line for everything lodestar adds to a request, with an estimate of its size in tokens.
+- `LODESTAR_DISABLE=T4,T6` switches off the listed features. The `B-T*` configurations set it.
+- `LODESTAR_TRACE=<file>` appends one JSON line for everything lodestar adds to a request, with an estimate of its size in tokens. The runner sets it for every B run.
 
-The harness sets them through the configurations above.
+## Cleaning up
+
+The proxy and the network stay after a run. To remove them:
+
+```sh
+docker rm -f lodestar-eval-proxy && docker network rm lodestar-eval
+```

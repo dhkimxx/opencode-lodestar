@@ -29,7 +29,7 @@
   "scripts": {
     "bundle": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --path-ignore-patterns='eval/fixtures/**'",
+    "test": "bun test",
     "check": "bun run typecheck && bun run test && bun run bundle"
   },
   "publishConfig": {

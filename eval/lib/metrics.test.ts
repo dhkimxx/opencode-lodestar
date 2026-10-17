@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { measure, outsideAccess } from "./metrics"
+import { measure } from "./metrics"
 import type { Message, SessionExport } from "./session"
 
 const tokens = (input: number, cacheRead: number) => ({ input, output: 10, reasoning: 0, cache: { read: cacheRead, write: 0 } })
@@ -64,26 +64,4 @@ test("uses session totals for tokens and cost", () => {
   expect(metrics.cacheHitRate).toBe(0.75)
   expect(metrics.cost).toBe(0.5)
   expect(metrics.durationMs).toBe(8000)
-})
-
-test("finds tool calls that reach outside the project into the user's home", () => {
-  const data: SessionExport = {
-    info: { id: "s", time: { created: 0 } },
-    messages: [
-      assistant(
-        1,
-        tool("read", { path: "/home/me/.cache/ws/ab12/project/src/a.ts" }),
-        tool("read", { path: "/home/me/workspace/other-repo/README.md" }),
-        tool("shell", { command: "cd /home/me/workspace && ls", workdir: "/home/me/.cache/ws/ab12/project" }),
-        tool("shell", { command: "ls /tmp && cat /usr/include/stdio.h" }),
-        tool("shell", { command: "cat > notes.md << 'EOF'\nThe edit tool works with /home/me/... paths.\nEOF" }),
-      ),
-    ],
-  }
-  expect(outsideAccess(data, "/home/me/.cache/ws/ab12/project", "/home/me").sort()).toEqual([
-    "/home/me/workspace",
-    "/home/me/workspace/other-repo/README.md",
-  ])
-  const bun: SessionExport = { ...data, messages: [assistant(2, tool("shell", { command: "/home/me/.cache/ws/bin/bun test" }))] }
-  expect(outsideAccess(bun, "/home/me/.cache/ws/ab12/project", "/home/me", ["/home/me/.cache/ws/bin"])).toEqual([])
 })

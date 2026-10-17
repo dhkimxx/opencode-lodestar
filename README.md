@@ -66,20 +66,18 @@ There is nothing to do. lodestar works whenever OpenCode compacts a session, whe
 
 ## Results
 
-Measured on v0.1.0 with the harness in [`eval/`](eval/README.md): five short coding tasks, each compacted at fixed points and checked with tests the agent never saw. With `opencode-go/longcat-2.5-preview-free`, 18 runs per configuration:
+Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os): 30 real issues from 10 open-source repositories, each worked by OpenCode alone and by OpenCode with lodestar. Four models took part: GLM-5.3 Flash, DeepSeek V4.1 Flash, GPT-6.1 Sol, and GPT-6 Luna, all at reasoning effort `high`. Every run was graded by the task's hidden tests. Compaction started at 50,000 tokens.
 
-| | OpenCode alone | With lodestar |
+| Per run, over 120 pairs | OpenCode alone | With lodestar |
 | --- | --- | --- |
-| Tasks completed | 15 of 18 | 16 of 18 |
-| Files read again after compaction, per task | 4.4 | 0.9 |
-| Prompt tokens per task | 164k | 149k (−9%) |
-| Output tokens per task | 3.9k | 4.7k (+21%) |
-| Minutes per task | 2.6 | 3.3 (+27%) |
-| Prompt cache hit rate | 86% | 85% |
+| Tasks resolved | 110 | 109 |
+| Prompt tokens | 1,098k | 949k (−14%) |
+| Tool calls | 58 | 52 (−11%) |
+| Files read again after compaction | 4.2 | 2.3 (−46%) |
 
-A cross-check with `opencode-go/mimo-v2.5` finished every task in both configurations. Files read again after compaction went from 4.0 per task to none, and prompt tokens rose 2%.
+lodestar acts after a compaction, and in the 52 pairs where one happened, its runs used 18% fewer prompt tokens and 16% fewer tool calls, and finished 16% sooner. All of these differences are larger than run-to-run noise.
 
-Details, per-feature results, and limitations are in [eval/results/v0.1.0.md](eval/results/v0.1.0.md).
+Most of the tokens saved were cached ones, so uncached input and cost didn't change measurably. Most tasks were resolved either way, so the resolve rate doesn't tell the two apart. Details, results by model, and limitations are in [eval/results/v0.1.0.md](eval/results/v0.1.0.md).
 
 ## Development
 
