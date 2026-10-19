@@ -14,7 +14,7 @@ export const CALLS_KEPT = 5
 export const TEST_TAIL_LINES = 20
 export const TEST_TAIL_CHARS = 2_000
 
-/** The changes to the files the agent edited, as a diff with this many lines of context. */
+/** Edited files too large to restore whole come back as a diff with this many lines of context. */
 export const RESTORE_DIFF_TOKENS = 3_000
 export const RESTORE_DIFF_CONTEXT = 10
 /** Lines of `git status` restored. */
@@ -28,14 +28,12 @@ export const RANGES_KEPT = 4
 /** A longer line is cut when restored. */
 export const RESTORE_LINE_CHARS = 1_000
 
-/** Edited files restored whole when git can't describe them, the most recently used first. */
+/** Edited files restored whole, the most recently edited first. */
 export const RESTORE_FILES = 5
 /** Further files the session used, listed by path only. */
 export const RESTORE_OTHER_FILES = 30
 /** A file larger than this comes back as a path reference instead of its content. */
 export const RESTORE_FILE_TOKENS = 5_000
-/** A new file the agent created comes back whole up to this size. */
-export const RESTORE_NEW_FILE_TOKENS = 1_500
 export const RESTORE_SKILL_TOKENS = 5_000
 export const RESTORE_SKILLS_TOTAL = 25_000
 export const RESTORE_PLAN_TOKENS = 5_000

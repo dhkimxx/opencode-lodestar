@@ -11,7 +11,6 @@ import {
   RESTORE_LINE_CHARS,
   RESTORE_MAX_TOKENS,
   RESTORE_MIN_TOKENS,
-  RESTORE_NEW_FILE_TOKENS,
   RESTORE_OTHER_FILES,
   RESTORE_PLAN_TOKENS,
   RESTORE_READ_FILES,
@@ -203,89 +202,64 @@ export async function buildRestoration(
 }
 
 /**
- * The "Your changes so far" section: a diff of the files the agent edited, the new files it created, and the state of
- * the working tree. Files git can't describe come back whole. The agent's most common first step after a compaction
- * was `git status` or `git diff`.
+ * The "Files you changed" section: the files the agent edited, whole and as they are now, the most recently edited
+ * first, then the working tree's `git status --short`. A file too large to restore whole comes back as its `git diff`.
+ * In evaluation, agents shown only a diff of their files read them again before they could edit them, while agents
+ * shown the whole files carried on editing. The status answers the `git status` many agents ran first after compaction.
  */
 async function describeChanges(state: SessionState, edited: FileRecord[], relative: (file: string) => string, limit: number) {
-  const directory = state.directory ?? process.cwd()
-  const files = edited.map((record) => record.path)
-  let context = RESTORE_DIFF_CONTEXT
-  let changes = await changesOf(directory, files, context)
-  const diffTokens = (diffs: Map<string, string>) => estimateTokens([...diffs.values()].join("\n"))
-  if (changes && diffTokens(changes.diffs) > RESTORE_DIFF_TOKENS) {
-    context = 3
-    changes = (await changesOf(directory, files, context)) ?? changes
-  }
-
   const parts: string[] = []
   const restored: string[] = []
   // Some room is left for the headings.
   let room = limit - 200
-  const diffBudget = Math.min(RESTORE_DIFF_TOKENS, room)
-  let budget = diffBudget
-  if (changes) {
-    const diffs: string[] = []
-    const left: string[] = []
-    for (const file of files) {
-      const diff = changes.diffs.get(file)
-      if (!diff) continue
-      if (estimateTokens(diff) <= budget) {
-        budget -= estimateTokens(diff)
-        diffs.push(diff)
-        restored.push(file)
-      } else left.push(file)
-    }
-    room -= diffBudget - budget
-    if (diffs.length > 0) {
-      parts.push(`\`git diff HEAD\` of the files you edited, with ${context} lines of context:\n\n${fenced(diffs.join("\n"), "diff")}`)
-    }
-    if (left.length > 0) parts.push(`Also changed, too large to show here: ${left.map(relative).join(", ")}. Run \`git diff\` on them if you need to.`)
-
-    const created: string[] = []
-    for (const file of changes.untracked) {
-      const text = await readText(file)
-      if (text === undefined) continue
-      const content = numbered(linesOf(text))
-      const tokens = estimateTokens(content)
-      if (tokens <= RESTORE_NEW_FILE_TOKENS && tokens <= budget && tokens <= room) {
-        budget -= tokens
-        room -= tokens
-        created.push(`### ${relative(file)}\n\n${fenced(content)}`)
-        restored.push(file)
-      }
-    }
-    if (created.length > 0) parts.push(`New files you created, with line numbers:\n\n${created.join("\n\n")}`)
-
-    if (changes.status.length > 0) {
-      const lines = changes.status.slice(0, RESTORE_STATUS_LINES)
-      const more = changes.status.length - lines.length
-      const status = `\`git status --short\`:\n\n${fenced(lines.join("\n") + (more > 0 ? `\n… and ${more} more` : ""))}`
-      if (estimateTokens(status) <= room) {
-        room -= estimateTokens(status)
-        parts.push(status)
-      }
-    }
-  }
-
-  // Files git can't describe: all of them when there's no repository.
   const whole: string[] = []
-  const undescribed = changes ? changes.outside : files
-  for (const file of undescribed.slice(0, RESTORE_FILES)) {
-    const text = await readText(file)
+  const large: string[] = []
+  for (const record of edited.slice(0, RESTORE_FILES)) {
+    const text = await readText(record.path)
     if (text === undefined) continue
     const content = numbered(linesOf(text))
     const tokens = estimateTokens(content)
     if (tokens <= RESTORE_FILE_TOKENS && tokens <= room) {
       room -= tokens
-      whole.push(`### ${relative(file)}\n\n${fenced(content)}`)
-      restored.push(file)
-    }
+      whole.push(`### ${relative(record.path)}\n\n${fenced(content)}`)
+      restored.push(record.path)
+    } else large.push(record.path)
   }
-  if (whole.length > 0) parts.push(`${changes ? "Other files you edited" : "Files you edited"}, as they are now, with line numbers:\n\n${whole.join("\n\n")}`)
+  if (whole.length > 0) parts.push(`Their current contents, with line numbers:\n\n${whole.join("\n\n")}`)
+
+  const directory = state.directory ?? process.cwd()
+  let context = RESTORE_DIFF_CONTEXT
+  let changes = await changesOf(directory, large, context)
+  const size = (diffs: Map<string, string>) => estimateTokens([...diffs.values()].join("\n"))
+  if (changes && size(changes.diffs) > RESTORE_DIFF_TOKENS) {
+    context = 3
+    changes = (await changesOf(directory, large, context)) ?? changes
+  }
+  const diffs: string[] = []
+  let budget = Math.min(RESTORE_DIFF_TOKENS, room)
+  for (const file of large) {
+    const diff = changes?.diffs.get(file)
+    if (!diff || estimateTokens(diff) > budget) continue
+    budget -= estimateTokens(diff)
+    room -= estimateTokens(diff)
+    diffs.push(diff)
+    restored.push(file)
+  }
+  if (diffs.length > 0) {
+    parts.push(`Too large to show whole, so here is \`git diff HEAD\` with ${context} lines of context:\n\n${fenced(diffs.join("\n"), "diff")}`)
+  }
+  const left = large.filter((file) => !restored.includes(file))
+  if (left.length > 0) parts.push(`Also changed, too large to show here: ${left.map(relative).join(", ")}. Read them again when you need them.`)
+
+  if (changes && changes.status.length > 0) {
+    const lines = changes.status.slice(0, RESTORE_STATUS_LINES)
+    const more = changes.status.length - lines.length
+    const status = `\`git status --short\`:\n\n${fenced(lines.join("\n") + (more > 0 ? `\n… and ${more} more` : ""))}`
+    if (estimateTokens(status) <= room) parts.push(status)
+  }
 
   if (parts.length === 0) return undefined
-  return { text: `## Your changes so far\n\n${parts.join("\n\n")}`, files: restored }
+  return { text: `## Files you changed\n\n${parts.join("\n\n")}`, files: restored }
 }
 
 export function describeRestoration(restoration: Restoration): string {

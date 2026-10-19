@@ -73,7 +73,7 @@ describe("buildRestoration", () => {
     expect(text).toContain("Your latest test run was `bun test`, which ended with exit 1. The end of its output:\n\n```\n1 fail\n3 pass\n```")
   })
 
-  test("shows the agent's changes as a git diff, with new files whole", async () => {
+  test("restores the files the agent edited whole, newest edit first, with the working tree's status", async () => {
     await file("a.ts", lines(40))
     git("init", "-q")
     git("add", "-A")
@@ -85,15 +85,28 @@ describe("buildRestoration", () => {
     await edit(session, "new.ts", 2)
     const restoration = await buildRestoration(session, 1_000_000, "key")
     const text = restoration?.text ?? ""
-    expect(text).toContain("`git diff HEAD` of the files you edited, with 10 lines of context:\n\n```diff\ndiff --git a/a.ts b/a.ts")
-    expect(text).toContain("-line 20\n+line twenty")
-    expect(text).toContain("line 10\n")
-    expect(text).not.toContain("\n line 9\n")
-    expect(text).toContain("New files you created, with line numbers:\n\n### new.ts\n\n```\n1: export const fresh = 1\n```")
+    expect(text).toContain("## Files you changed\n\nTheir current contents, with line numbers:\n\n### new.ts\n\n```\n1: export const fresh = 1\n```")
+    expect(text).toContain("### a.ts\n\n```\n1: line 1\n")
+    expect(text).toContain("20: line twenty\n")
+    expect(text).not.toContain("```diff")
     expect(text).toContain("`git status --short`:\n\n```\n M a.ts\n?? new.ts\n```")
     expect(text).toContain("Before you finish:")
     expect(text).not.toContain("## Other files you used earlier")
     expect(restoration?.sections.changes).toBeGreaterThan(0)
+  })
+
+  test("shows the diff of an edited file too large to restore whole", async () => {
+    await file("big.ts", lines(3_000))
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+    await file("big.ts", lines(3_000).replace("line 1500\n", "line fifteen hundred\n"))
+    const session = state()
+    await edit(session, "big.ts", 1)
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("Too large to show whole, so here is `git diff HEAD` with 10 lines of context:\n\n```diff\ndiff --git a/big.ts b/big.ts")
+    expect(text).toContain("-line 1500\n+line fifteen hundred")
+    expect(text).not.toContain("1: line 1\n")
   })
 
   test("restores edited files whole outside a git repository", async () => {
@@ -101,7 +114,8 @@ describe("buildRestoration", () => {
     const session = state()
     await edit(session, "a.ts", 1)
     const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
-    expect(text).toContain("Files you edited, as they are now, with line numbers:\n\n### a.ts\n\n```\n1: export const a = 1\n```")
+    expect(text).toContain("## Files you changed\n\nTheir current contents, with line numbers:\n\n### a.ts\n\n```\n1: export const a = 1\n```")
+    expect(text).not.toContain("git status")
   })
 
   test("shows the ranges the agent read last in the files it only read, newest files first", async () => {

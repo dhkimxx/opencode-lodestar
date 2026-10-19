@@ -25,7 +25,6 @@ var RESTORE_LINE_CHARS = 1000;
 var RESTORE_FILES = 5;
 var RESTORE_OTHER_FILES = 30;
 var RESTORE_FILE_TOKENS = 5000;
-var RESTORE_NEW_FILE_TOKENS = 1500;
 var RESTORE_SKILL_TOKENS = 5000;
 var RESTORE_SKILLS_TOTAL = 25000;
 var RESTORE_PLAN_TOKENS = 5000;
@@ -245,10 +244,8 @@ async function changesOf(directory, files, context) {
   const root = await realpath(top).catch(() => top);
   const located = await Promise.all(files.map(async (file) => ({ file, relative: await inside(root, file) })));
   const tracked = new Map(located.flatMap(({ file, relative }) => relative ? [[relative, file]] : []));
-  const outside = located.filter(({ relative }) => !relative).map(({ file }) => file);
   const specs = [...tracked.keys()].map((relative) => `:(literal)${relative}`);
   const diffs = new Map;
-  const untracked = [];
   if (specs.length > 0) {
     const hasHead = await git(root, ["rev-parse", "--verify", "-q", "HEAD"]) !== undefined;
     const diff = await git(root, [
@@ -267,22 +264,10 @@ async function changesOf(directory, files, context) {
       if (file && chunk.trim())
         diffs.set(file, chunk.trimEnd());
     }
-    const others = await git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...specs]);
-    for (const relative of (others ?? "").split("\x00").filter(Boolean)) {
-      const file = tracked.get(relative);
-      if (file)
-        untracked.push(file);
-    }
-    const ignored = await git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ...specs]);
-    for (const relative of (ignored ?? "").split("\x00").filter(Boolean)) {
-      const file = tracked.get(relative);
-      if (file)
-        outside.push(file);
-    }
   }
   const status = (await git(root, ["status", "--short", "--untracked-files=normal"]) ?? "").split(`
 `).filter(Boolean);
-  return { root, diffs, untracked, outside, status };
+  return { diffs, status };
 }
 
 // src/tokens.ts
@@ -491,105 +476,75 @@ ${skillSections.join(`
   return { text, tokens: estimateTokens(text), at: Date.now(), summaryKey, sections: sizes };
 }
 async function describeChanges(state, edited, relative, limit) {
-  const directory = state.directory ?? process.cwd();
-  const files = edited.map((record) => record.path);
-  let context = RESTORE_DIFF_CONTEXT;
-  let changes = await changesOf(directory, files, context);
-  const diffTokens = (diffs) => estimateTokens([...diffs.values()].join(`
-`));
-  if (changes && diffTokens(changes.diffs) > RESTORE_DIFF_TOKENS) {
-    context = 3;
-    changes = await changesOf(directory, files, context) ?? changes;
-  }
   const parts = [];
   const restored = [];
   let room = limit - 200;
-  const diffBudget = Math.min(RESTORE_DIFF_TOKENS, room);
-  let budget = diffBudget;
-  if (changes) {
-    const diffs = [];
-    const left = [];
-    for (const file of files) {
-      const diff = changes.diffs.get(file);
-      if (!diff)
-        continue;
-      if (estimateTokens(diff) <= budget) {
-        budget -= estimateTokens(diff);
-        diffs.push(diff);
-        restored.push(file);
-      } else
-        left.push(file);
-    }
-    room -= diffBudget - budget;
-    if (diffs.length > 0) {
-      parts.push(`\`git diff HEAD\` of the files you edited, with ${context} lines of context:
-
-${fenced(diffs.join(`
-`), "diff")}`);
-    }
-    if (left.length > 0)
-      parts.push(`Also changed, too large to show here: ${left.map(relative).join(", ")}. Run \`git diff\` on them if you need to.`);
-    const created = [];
-    for (const file of changes.untracked) {
-      const text = await readText(file);
-      if (text === undefined)
-        continue;
-      const content = numbered(linesOf(text));
-      const tokens = estimateTokens(content);
-      if (tokens <= RESTORE_NEW_FILE_TOKENS && tokens <= budget && tokens <= room) {
-        budget -= tokens;
-        room -= tokens;
-        created.push(`### ${relative(file)}
-
-${fenced(content)}`);
-        restored.push(file);
-      }
-    }
-    if (created.length > 0)
-      parts.push(`New files you created, with line numbers:
-
-${created.join(`
-
-`)}`);
-    if (changes.status.length > 0) {
-      const lines = changes.status.slice(0, RESTORE_STATUS_LINES);
-      const more = changes.status.length - lines.length;
-      const status = `\`git status --short\`:
-
-${fenced(lines.join(`
-`) + (more > 0 ? `
-\u2026 and ${more} more` : ""))}`;
-      if (estimateTokens(status) <= room) {
-        room -= estimateTokens(status);
-        parts.push(status);
-      }
-    }
-  }
   const whole = [];
-  const undescribed = changes ? changes.outside : files;
-  for (const file of undescribed.slice(0, RESTORE_FILES)) {
-    const text = await readText(file);
+  const large = [];
+  for (const record of edited.slice(0, RESTORE_FILES)) {
+    const text = await readText(record.path);
     if (text === undefined)
       continue;
     const content = numbered(linesOf(text));
     const tokens = estimateTokens(content);
     if (tokens <= RESTORE_FILE_TOKENS && tokens <= room) {
       room -= tokens;
-      whole.push(`### ${relative(file)}
+      whole.push(`### ${relative(record.path)}
 
 ${fenced(content)}`);
-      restored.push(file);
-    }
+      restored.push(record.path);
+    } else
+      large.push(record.path);
   }
   if (whole.length > 0)
-    parts.push(`${changes ? "Other files you edited" : "Files you edited"}, as they are now, with line numbers:
+    parts.push(`Their current contents, with line numbers:
 
 ${whole.join(`
 
 `)}`);
+  const directory = state.directory ?? process.cwd();
+  let context = RESTORE_DIFF_CONTEXT;
+  let changes = await changesOf(directory, large, context);
+  const size = (diffs) => estimateTokens([...diffs.values()].join(`
+`));
+  if (changes && size(changes.diffs) > RESTORE_DIFF_TOKENS) {
+    context = 3;
+    changes = await changesOf(directory, large, context) ?? changes;
+  }
+  const diffs = [];
+  let budget = Math.min(RESTORE_DIFF_TOKENS, room);
+  for (const file of large) {
+    const diff = changes?.diffs.get(file);
+    if (!diff || estimateTokens(diff) > budget)
+      continue;
+    budget -= estimateTokens(diff);
+    room -= estimateTokens(diff);
+    diffs.push(diff);
+    restored.push(file);
+  }
+  if (diffs.length > 0) {
+    parts.push(`Too large to show whole, so here is \`git diff HEAD\` with ${context} lines of context:
+
+${fenced(diffs.join(`
+`), "diff")}`);
+  }
+  const left = large.filter((file) => !restored.includes(file));
+  if (left.length > 0)
+    parts.push(`Also changed, too large to show here: ${left.map(relative).join(", ")}. Read them again when you need them.`);
+  if (changes && changes.status.length > 0) {
+    const lines = changes.status.slice(0, RESTORE_STATUS_LINES);
+    const more = changes.status.length - lines.length;
+    const status = `\`git status --short\`:
+
+${fenced(lines.join(`
+`) + (more > 0 ? `
+\u2026 and ${more} more` : ""))}`;
+    if (estimateTokens(status) <= room)
+      parts.push(status);
+  }
   if (parts.length === 0)
     return;
-  return { text: `## Your changes so far
+  return { text: `## Files you changed
 
 ${parts.join(`
 
