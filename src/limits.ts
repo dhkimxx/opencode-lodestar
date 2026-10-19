@@ -1,11 +1,41 @@
 // Fixed values, chosen from Claude Code's public documentation and tuned by evaluation. There are no user settings.
 
-/** Files restored after compaction, the most recently changed first. */
+/** The user's first request is restored up to this many tokens, keeping its start and its end. */
+export const RESTORE_TASK_TOKENS = 3_000
+/** Later requests: the latest few, each up to this many tokens. */
+export const RESTORE_REQUESTS = 3
+export const RESTORE_REQUEST_TOKENS = 1_000
+/** A request is stored up to this many characters. */
+export const REQUEST_CHARS = 16_000
+
+/** The agent's latest tool calls, kept and restored. */
+export const CALLS_KEPT = 5
+/** The end of the latest test command's output. */
+export const TEST_TAIL_LINES = 20
+export const TEST_TAIL_CHARS = 2_000
+
+/** The changes to the files the agent edited, as a diff with this many lines of context. */
+export const RESTORE_DIFF_TOKENS = 3_000
+export const RESTORE_DIFF_CONTEXT = 10
+/** Lines of `git status` restored. */
+export const RESTORE_STATUS_LINES = 20
+
+/** Files the agent only read: the ranges it read last, in this many of the most recently used ones. */
+export const RESTORE_READ_FILES = 3
+export const RESTORE_READ_TOKENS = 1_200
+/** Line ranges kept per file. */
+export const RANGES_KEPT = 4
+/** A longer line is cut when restored. */
+export const RESTORE_LINE_CHARS = 1_000
+
+/** Edited files restored whole when git can't describe them, the most recently used first. */
 export const RESTORE_FILES = 5
 /** Further files the session used, listed by path only. */
 export const RESTORE_OTHER_FILES = 30
 /** A file larger than this comes back as a path reference instead of its content. */
 export const RESTORE_FILE_TOKENS = 5_000
+/** A new file the agent created comes back whole up to this size. */
+export const RESTORE_NEW_FILE_TOKENS = 1_500
 export const RESTORE_SKILL_TOKENS = 5_000
 export const RESTORE_SKILLS_TOTAL = 25_000
 export const RESTORE_PLAN_TOKENS = 5_000

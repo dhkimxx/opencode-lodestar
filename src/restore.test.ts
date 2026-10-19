@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { execFileSync } from "node:child_process"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { recordTool } from "./files"
@@ -9,13 +10,29 @@ import type { SessionState } from "./state"
 let dir = ""
 const state = (): SessionState => ({ directory: dir, files: {}, notes: [], skills: {}, toolStreak: 0, recited: false })
 
-async function file(name: string, text: string, ageSeconds: number) {
+async function file(name: string, text: string) {
   const target = path.join(dir, name)
   await writeFile(target, text)
-  const time = Date.now() / 1000 - ageSeconds
-  await utimes(target, time, time)
   return target
 }
+
+const lines = (count: number) => Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n") + "\n"
+
+const read = (session: SessionState, name: string, now: number, range?: [number, number]) =>
+  recordTool(session, {
+    tool: "read",
+    input: { path: name },
+    output: undefined,
+    content: range ? [{ type: "text", text: `Read file ${name}, lines ${range[0]}-${range[1]}\n…` }] : undefined,
+    directory: dir,
+    now,
+  })
+
+const edit = (session: SessionState, name: string, now: number) =>
+  recordTool(session, { tool: "edit", input: { path: name }, output: undefined, directory: dir, now })
+
+const git = (...args: string[]) =>
+  execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: dir, stdio: "pipe" })
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "lodestar-restore-"))
@@ -34,30 +51,84 @@ describe("restoreBudget", () => {
 })
 
 describe("buildRestoration", () => {
-  test("restores the five most recently changed files that the session used", async () => {
+  test("puts the user's requests back word for word, unless the request still shows them", async () => {
     const session = state()
-    for (let index = 0; index < 7; index++) {
-      const name = `f${index}.ts`
-      await file(name, `export const value${index} = ${index}\n`, 100 - index)
-      await recordTool(session, { tool: "read", input: { path: name }, output: undefined, directory: dir, now: index })
-    }
-    const restoration = await buildRestoration(session, 1_000_000, "key")
-    expect(restoration?.files).toBe(5)
-    expect(restoration?.text).toContain("### f6.ts\n\n```\n1: export const value6 = 6")
-    expect(restoration?.text).not.toContain("### f1.ts")
-    expect(restoration?.text).toContain("## Other files you used earlier")
-    expect(restoration?.text).toContain("- f1.ts\n- f0.ts")
-    expect(restoration?.text).not.toMatch(/<file|path="/)
+    session.requests = ["Fix the parser.\nKeep the public API.", "Also handle tabs."]
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("## Your task")
+    expect(text).toContain("```\nFix the parser.\nKeep the public API.\n```")
+    expect(text).toContain("The user's later messages, oldest first:\n\n```\nAlso handle tabs.\n```")
+
+    const kept = (await buildRestoration(session, 1_000_000, "key", "[User]: Fix the parser. Keep the public API."))?.text ?? ""
+    expect(kept).not.toContain("Fix the parser.")
+    expect(kept).toContain("The user's latest messages, oldest first:\n\n```\nAlso handle tabs.\n```")
   })
 
-  test("refers to a file that is too large instead of restoring it", async () => {
+  test("says where the agent left off", async () => {
     const session = state()
-    await file("big.ts", "x".repeat(30_000), 1)
-    await recordTool(session, { tool: "read", input: { path: "big.ts" }, output: undefined, directory: dir, now: 1 })
+    session.calls = [{ what: "read a.ts, lines 1-20" }, { what: "shell `bun test`", outcome: "exit 1" }]
+    session.lastTest = { command: "bun test", exit: 1, tail: "1 fail\n3 pass" }
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("Your last tool calls, oldest first:\n\n- read a.ts, lines 1-20\n- shell `bun test`: exit 1")
+    expect(text).toContain("Your latest test run was `bun test`, which ended with exit 1. The end of its output:\n\n```\n1 fail\n3 pass\n```")
+  })
+
+  test("shows the agent's changes as a git diff, with new files whole", async () => {
+    await file("a.ts", lines(40))
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+    await file("a.ts", lines(40).replace("line 20\n", "line twenty\n"))
+    await file("new.ts", "export const fresh = 1\n")
+    const session = state()
+    await edit(session, "a.ts", 1)
+    await edit(session, "new.ts", 2)
     const restoration = await buildRestoration(session, 1_000_000, "key")
-    expect(restoration?.files).toBe(0)
-    expect(restoration?.references).toBe(1)
-    expect(restoration?.text).toContain("### big.ts\n\nNot restored: about")
+    const text = restoration?.text ?? ""
+    expect(text).toContain("`git diff HEAD` of the files you edited, with 10 lines of context:\n\n```diff\ndiff --git a/a.ts b/a.ts")
+    expect(text).toContain("-line 20\n+line twenty")
+    expect(text).toContain("line 10\n")
+    expect(text).not.toContain("\n line 9\n")
+    expect(text).toContain("New files you created, with line numbers:\n\n### new.ts\n\n```\n1: export const fresh = 1\n```")
+    expect(text).toContain("`git status --short`:\n\n```\n M a.ts\n?? new.ts\n```")
+    expect(text).toContain("Before you finish:")
+    expect(text).not.toContain("## Other files you used earlier")
+    expect(restoration?.sections.changes).toBeGreaterThan(0)
+  })
+
+  test("restores edited files whole outside a git repository", async () => {
+    await file("a.ts", "export const a = 1\n")
+    const session = state()
+    await edit(session, "a.ts", 1)
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("Files you edited, as they are now, with line numbers:\n\n### a.ts\n\n```\n1: export const a = 1\n```")
+  })
+
+  test("shows the ranges the agent read last in the files it only read, newest files first", async () => {
+    const session = state()
+    for (const [index, name] of ["old.ts", "big.ts", "mid.ts", "new.ts"].entries()) {
+      await file(name, lines(300))
+      await read(session, name, index + 1, [100, 120])
+    }
+    await read(session, "big.ts", 10, [200, 210])
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("## Code you were reading")
+    expect(text).toContain("### big.ts, lines 100-120, 200-210\n\n```\n100: line 100")
+    expect(text).toContain("210: line 210\n```")
+    expect(text).not.toContain("99: line 99")
+    expect(text.indexOf("### big.ts")).toBeLessThan(text.indexOf("### new.ts"))
+    expect(text).not.toContain("### old.ts")
+    expect(text).toContain("## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n- old.ts")
+    expect(text).not.toContain("Before you finish:")
+  })
+
+  test("leaves out a range too large to show, and lists the file instead", async () => {
+    const session = state()
+    await file("huge.ts", lines(2_000))
+    await read(session, "huge.ts", 1, [1, 2_000])
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).not.toContain("## Code you were reading")
+    expect(text).toContain("- huge.ts")
   })
 
   test("puts notes and skills back, newest skill first", async () => {
@@ -71,11 +142,20 @@ describe("buildRestoration", () => {
     const text = restoration?.text ?? ""
     expect(text).toContain("The tokenizer handles decimals now.")
     expect(text.indexOf("### Skill: new")).toBeLessThan(text.indexOf("### Skill: old"))
-    expect(restoration && describeRestoration(restoration)).toBe("lodestar restored 2 skills after compaction (~1k tokens).")
+    expect(restoration && describeRestoration(restoration)).toBe("lodestar restored notes, skills after compaction (~1k tokens).")
   })
 
   test("returns nothing when there is nothing to restore", async () => {
     expect(await buildRestoration(state(), 1_000_000, "key")).toBeUndefined()
+  })
+
+  test("a file containing backticks gets a longer fence", async () => {
+    const session = state()
+    await file("notes.md", "```ts\ncode\n```\n")
+    await read(session, "notes.md", 1, [1, 3])
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("### notes.md, lines 1-3\n\n````\n1: ```ts")
+    expect(text).not.toMatch(/<file|path="/)
   })
 })
 
@@ -88,12 +168,4 @@ test("summaries that share an opening still get different keys", () => {
   const opening = "## User requests\n" + "x".repeat(400)
   expect(summaryKeyOf(`${opening}\nfirst`)).not.toBe(summaryKeyOf(`${opening}\nsecond`))
   expect(summaryKeyOf(" same ")).toBe(summaryKeyOf("same"))
-})
-
-test("a file containing backticks gets a longer fence", async () => {
-  const session = state()
-  await file("notes.md", "```ts\ncode\n```\n", 1)
-  await recordTool(session, { tool: "read", input: { path: "notes.md" }, output: undefined, directory: dir, now: 1 })
-  const restoration = await buildRestoration(session, 1_000_000, "key")
-  expect(restoration?.text).toContain("### notes.md\n\n````\n1: ```ts")
 })

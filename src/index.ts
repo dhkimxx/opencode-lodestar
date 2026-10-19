@@ -8,6 +8,7 @@ import { recitation, staleFiles, staleNotice } from "./reminders"
 import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
 import { estimateTokens } from "./tokens"
+import { recordCall, recordRequest } from "./work"
 
 type Feature = "T2" | "T4" | "T6"
 type ModelRef = { readonly providerID: string; readonly id: string }
@@ -64,9 +65,11 @@ export default Plugin.define({
       return state.directory ?? process.cwd()
     }
 
-    // One restoration per checkpoint, whichever of the compaction event and the next request asks first.
+    // One restoration per checkpoint, built for the first request after the compaction. It is kept out of the session
+    // itself: OpenCode counts a message posted there as a new exchange, keeps the turn before it as serialized text in
+    // the next checkpoint, and in evaluation that text led a model to break its own tool calls.
     const building = new Map<string, Promise<Snapshot | undefined>>()
-    function ensureSnapshot(sessionID: string, summary: string, model: ModelRef | undefined) {
+    function ensureSnapshot(sessionID: string, summary: string, visible: string, model: ModelRef | undefined) {
       const running = building.get(sessionID)
       if (running) return running
       const job = (async () => {
@@ -74,12 +77,12 @@ export default Plugin.define({
         const key = summaryKeyOf(summary)
         if (state.snapshot?.summaryKey === key) return state.snapshot
         await directoryOf(sessionID, state)
-        const restoration = await buildRestoration(state, await contextWindow(model), key)
+        const restoration = await buildRestoration(state, await contextWindow(model), key, visible)
         state.snapshot = restoration
           ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) }
           : { text: "", tokens: 0, at: Date.now(), summaryKey: key }
         store.save(sessionID)
-        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note })
+        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections })
         return state.snapshot
       })().finally(() => building.delete(sessionID))
       building.set(sessionID, job)
@@ -91,7 +94,9 @@ export default Plugin.define({
       const index = checkpointIndex(messages)
       const checkpoint = messages[index]
       if (!checkpoint) return
-      const snapshot = await ensureSnapshot(sessionID, summaryFromCheckpoint(textOf(checkpoint)), model)
+      // What the request already shows from the checkpoint on, such as a user message OpenCode kept, isn't repeated.
+      const visible = messages.slice(index).map(textOf).join("\n")
+      const snapshot = await ensureSnapshot(sessionID, summaryFromCheckpoint(textOf(checkpoint)), visible, model)
       const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined
       if (message) messages.splice(index + 1, 0, message)
     }
@@ -104,10 +109,12 @@ export default Plugin.define({
       }),
     )
 
-    // T1: what the agent reads and changes. T4 counts the calls; T6 remembers how each file looked.
+    // T1: what the agent reads and changes, and how its latest calls went. T4 counts the calls; T6 remembers how each
+    // file looked.
     registrations.push(
       await ctx.tool.hook("execute.after", async (event) => {
         const state = await store.get(event.sessionID)
+        const directory = await directoryOf(event.sessionID, state)
         state.toolStreak++
         if (SHELL_TOOLS.has(event.tool)) {
           const now = Date.now()
@@ -115,14 +122,21 @@ export default Plugin.define({
           shellStarts.delete(event.id)
         }
         if (event.status === "completed") {
-          await recordTool(state, {
-            tool: event.tool,
-            input: event.input,
-            output: event.result.output,
-            directory: await directoryOf(event.sessionID, state),
-            now: Date.now(),
-          })
+          const { output, content } = event.result
+          await recordTool(state, { tool: event.tool, input: event.input, output, content, directory, now: Date.now() })
+          recordCall(state, { tool: event.tool, input: event.input, output, content, directory })
+        } else {
+          recordCall(state, { tool: event.tool, input: event.input, error: event.error.message, directory })
         }
+        store.save(event.sessionID)
+      }),
+    )
+
+    // The user's requests, word for word. After a compaction the summary has them only in its own words.
+    registrations.push(
+      await ctx.session.hook("prompt", async (event) => {
+        const state = await store.get(event.sessionID)
+        recordRequest(state, event.prompt.text)
         store.save(event.sessionID)
       }),
     )
@@ -193,12 +207,6 @@ export default Plugin.define({
       if (event.type === "session.skill.activated" && typeof data.name === "string" && typeof data.text === "string") {
         state.skills[data.name] = { name: data.name, text: data.text, at: Date.now() }
         store.save(sessionID)
-      }
-      // Built here so it's ready for the first request after the compaction. It isn't announced with a message in the
-      // session: OpenCode counts such a message as a new exchange, keeps the turn before it as serialized text in the
-      // next checkpoint, and in evaluation that text led a model to break its own tool calls.
-      if (event.type === "session.compaction.ended" && on("T2") && typeof data.text === "string") {
-        await ensureSnapshot(sessionID, data.text, data.model as ModelRef | undefined)
       }
     }
     void (async () => {

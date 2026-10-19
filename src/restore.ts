@@ -1,29 +1,37 @@
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import path from "node:path"
+import { changesOf } from "./changes"
 import { diskState, lastUsed, readText } from "./files"
 import {
+  RESTORE_DIFF_CONTEXT,
+  RESTORE_DIFF_TOKENS,
   RESTORE_FILE_TOKENS,
   RESTORE_FILES,
+  RESTORE_LINE_CHARS,
   RESTORE_MAX_TOKENS,
   RESTORE_MIN_TOKENS,
+  RESTORE_NEW_FILE_TOKENS,
   RESTORE_OTHER_FILES,
   RESTORE_PLAN_TOKENS,
+  RESTORE_READ_FILES,
+  RESTORE_READ_TOKENS,
+  RESTORE_REQUEST_TOKENS,
   RESTORE_SHARE,
   RESTORE_SKILL_TOKENS,
   RESTORE_SKILLS_TOTAL,
+  RESTORE_STATUS_LINES,
+  RESTORE_TASK_TOKENS,
 } from "./limits"
-import type { SessionState, Snapshot } from "./state"
-import { estimateTokens, keepStart } from "./tokens"
+import type { FileRecord, SessionState, Snapshot } from "./state"
+import { estimateTokens, keepEnds, keepStart } from "./tokens"
 
 /** Where OpenCode's plan mode writes plans. */
 export const PLAN_DIR = path.join(homedir(), ".opencode", "plan")
 
 export interface Restoration extends Snapshot {
-  files: number
-  references: number
-  skills: number
-  plan: boolean
+  /** Estimated tokens of each section, by name. */
+  sections: Record<string, number>
 }
 
 /** The budget grows with the conversation that was compacted, within fixed bounds. */
@@ -32,107 +40,149 @@ export function restoreBudget(compactedTokens: number | undefined, window: numbe
   return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromConversation))
 }
 
-const numbered = (text: string) =>
-  text
-    .split("\n")
-    .map((line, index) => `${index + 1}: ${line}`)
+/** Lines numbered the way OpenCode's read tool numbers them, starting at `first`. Very long lines are cut. */
+const numbered = (lines: string[], first = 1) =>
+  lines
+    .map((line, index) => `${first + index}: ${line.length > RESTORE_LINE_CHARS ? `${line.slice(0, RESTORE_LINE_CHARS)}…` : line}`)
     .join("\n")
+
+/** A file's lines, without the empty one after a final newline. */
+const linesOf = (text: string) => (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n")
 
 /**
  * A fenced block that the content can't close early. Markdown, not XML: some models write their tool calls in
  * XML, and XML-looking context such as `<file path="…">` leaked into their tool arguments during evaluation.
  */
-function fenced(text: string) {
+function fenced(text: string, language = "") {
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
   const fence = "`".repeat(Math.max(3, longest + 1))
-  return `${fence}\n${text}\n${fence}`
+  return `${fence}${language}\n${text}\n${fence}`
 }
 
+/** Whitespace-insensitive, so a request still counts as present when it was reflowed. */
+const normalize = (text: string) => text.replace(/\s+/g, " ").trim()
+
+const isPlan = (record: FileRecord) => record.path.startsWith(PLAN_DIR + path.sep)
+
 /**
- * Builds what goes back into the conversation after a compaction, read fresh from disk.
+ * Builds what goes back into the conversation after a compaction, read fresh from disk. `visible` is the text the
+ * request already holds from the checkpoint on, so a user message OpenCode kept isn't repeated.
  * Returns undefined when there is nothing worth restoring.
  */
-export async function buildRestoration(state: SessionState, window: number, summaryKey: string): Promise<Restoration | undefined> {
+export async function buildRestoration(
+  state: SessionState,
+  window: number,
+  summaryKey: string,
+  visible = "",
+): Promise<Restoration | undefined> {
   let budget = restoreBudget(state.compactedTokens, window)
   const sections: string[] = []
-  const take = (text: string) => {
+  const sizes: Record<string, number> = {}
+  const take = (name: string, text: string) => {
     const tokens = estimateTokens(text)
     if (tokens > budget) return false
     budget -= tokens
     sections.push(text)
+    sizes[name] = tokens
     return true
   }
   const relative = (file: string) => (state.directory ? path.relative(state.directory, file) || file : file)
+  /** Files whose content or changes are shown, so they aren't listed again. */
+  const shown = new Set<string>()
 
-  if (state.notes.length > 0) take(`## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
+  // The summary keeps the task only in its own words, and in evaluation it lost about one identifier in five.
+  const present = normalize(visible)
+  const [first, ...later] = state.requests ?? []
+  const parts: string[] = []
+  if (first && !present.includes(normalize(first))) {
+    parts.push(`The user's request, word for word. Where the summary leaves out a detail, it is here.\n\n${fenced(keepEnds(first, RESTORE_TASK_TOKENS))}`)
+  }
+  const missing = later.filter((request) => !present.includes(normalize(request)))
+  if (missing.length > 0) {
+    parts.push(
+      `${parts.length > 0 ? "The user's later messages" : "The user's latest messages"}, oldest first:\n\n${missing
+        .map((request) => fenced(keepEnds(request, RESTORE_REQUEST_TOKENS)))
+        .join("\n\n")}`,
+    )
+  }
+  if (parts.length > 0) take("task", `## Your task\n\n${parts.join("\n\n")}`)
+
+  const work: string[] = []
+  if (state.calls?.length) {
+    work.push(`Your last tool calls, oldest first:\n\n${state.calls.map((call) => `- ${call.what}${call.outcome ? `: ${call.outcome}` : ""}`).join("\n")}`)
+  }
+  const test = state.lastTest
+  if (test) {
+    const ending = test.exit === undefined ? "" : `, which ended with exit ${test.exit}`
+    work.push(`Your latest test run was \`${test.command}\`${ending}. The end of its output:\n\n${fenced(test.tail || "(no output)")}`)
+  }
+  if (work.length > 0) take("state", `## Where you left off\n\n${work.join("\n\n")}`)
 
   const records = Object.values(state.files)
-  const planRecord = records
-    .filter((record) => record.editedAt && record.path.startsWith(PLAN_DIR + path.sep))
-    .sort((a, b) => lastUsed(b) - lastUsed(a))[0]
-  const planText = planRecord && (await readText(planRecord.path))
-  const plan = !!planText && take(`## Plan (${planRecord.path})\n\n${keepStart(planText, RESTORE_PLAN_TOKENS)}`)
+  const edited = records.filter((record) => record.editedAt && !isPlan(record)).sort((a, b) => (b.editedAt ?? 0) - (a.editedAt ?? 0))
+  if (edited.length > 0) {
+    const changes = await describeChanges(state, edited, relative, budget)
+    if (changes && take("changes", changes.text)) for (const file of changes.files) shown.add(file)
+  }
 
-  // Claude Code's rule: the files read or edited in this session that changed on disk most recently.
-  const candidates = await Promise.all(
-    records
-      .filter((record) => !record.path.startsWith(PLAN_DIR + path.sep))
-      .map(async (record) => ({ record, disk: await diskState(record.path) })),
-  )
-  const onDisk = candidates
-    .flatMap((candidate) => (candidate.disk ? [{ ...candidate, disk: candidate.disk }] : []))
-    .sort((a, b) => b.disk.mtimeMs - a.disk.mtimeMs || lastUsed(b.record) - lastUsed(a.record))
-  const recent = onDisk.slice(0, RESTORE_FILES)
-  const fileSections: string[] = []
-  let files = 0
-  let references = 0
-  for (const { record } of recent) {
+  // The parts of read-only files the agent read last. Picked by when they were used: files from a fresh checkout all
+  // share one change time, so ordering by it picked read-only files at random.
+  const reading: string[] = []
+  for (const record of records.filter((record) => !record.editedAt && record.ranges?.length && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
+    if (reading.length >= RESTORE_READ_FILES) break
     const text = await readText(record.path)
     if (text === undefined) continue
-    const content = numbered(text)
-    const tokens = estimateTokens(content)
-    const full = `### ${relative(record.path)}\n\n${fenced(content)}`
-    if (tokens <= RESTORE_FILE_TOKENS && estimateTokens(full) <= budget) {
-      budget -= estimateTokens(full)
-      fileSections.push(full)
-      files++
-      continue
+    const lines = linesOf(text)
+    const chosen: [number, number][] = []
+    let tokens = 0
+    for (const [start, end] of [...(record.ranges ?? [])].reverse()) {
+      if (start > lines.length) continue
+      const size = estimateTokens(numbered(lines.slice(start - 1, Math.min(end, lines.length)), start))
+      if (tokens + size > RESTORE_READ_TOKENS) break
+      tokens += size
+      chosen.push([start, Math.min(end, lines.length)])
     }
-    const reference = `### ${relative(record.path)}\n\nNot restored: about ${tokens} tokens, too large. Read it again if you need it.`
-    if (estimateTokens(reference) <= budget) {
-      budget -= estimateTokens(reference)
-      fileSections.push(reference)
-      references++
-    }
+    if (chosen.length === 0) continue
+    chosen.sort((a, b) => a[0] - b[0])
+    const label = chosen.map(([start, end]) => `${start}-${end}`).join(", ")
+    const body = chosen.map(([start, end]) => fenced(numbered(lines.slice(start - 1, end), start))).join("\n\n")
+    reading.push(`### ${relative(record.path)}, lines ${label}\n\n${body}`)
+    shown.add(record.path)
   }
-  if (fileSections.length > 0) {
-    sections.push(`## Files you were working with\n\nCurrent contents, with line numbers.\n\n${fileSections.join("\n\n")}`)
+  if (reading.length > 0) {
+    take("reading", `## Code you were reading\n\nThe parts of these files you read last, as they are on disk now, with line numbers.\n\n${reading.join("\n\n")}`)
   }
 
-  // Only a few files come back, so name the rest. Without this list, an agent that saw some files restored
-  // stopped looking at the others, and missed uses of a function it was asked to rename everywhere.
-  const others = onDisk
-    .slice(RESTORE_FILES)
-    .sort((a, b) => lastUsed(b.record) - lastUsed(a.record))
-    .slice(0, RESTORE_OTHER_FILES)
-    .map(({ record }) => `- ${relative(record.path)}`)
+  if (state.notes.length > 0) take("notes", `## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
+
+  const planRecord = records.filter((record) => record.editedAt && isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))[0]
+  const planText = planRecord && (await readText(planRecord.path))
+  if (planRecord && planText) take("plan", `## Plan (${planRecord.path})\n\n${keepStart(planText, RESTORE_PLAN_TOKENS)}`)
+
+  // Without this list, an agent that saw some files restored stopped looking at the others, and missed uses of a
+  // function it was asked to rename everywhere.
+  const others: string[] = []
+  for (const record of records.filter((record) => !shown.has(record.path) && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
+    if (others.length >= RESTORE_OTHER_FILES) break
+    if (await diskState(record.path)) others.push(`- ${relative(record.path)}`)
+  }
   if (others.length > 0) {
-    take(`## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n${others.join("\n")}`)
+    take("others", `## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n${others.join("\n")}`)
   }
 
   // Newest skills first. Each keeps its start, since instructions near the top matter most.
   const skillSections: string[] = []
-  let skillBudget = RESTORE_SKILLS_TOTAL
+  let skillBudget = Math.min(RESTORE_SKILLS_TOTAL, budget)
   for (const skill of Object.values(state.skills).sort((a, b) => b.at - a.at)) {
     const body = `### Skill: ${skill.name}\n\n${keepStart(skill.text, RESTORE_SKILL_TOKENS)}`
     const tokens = estimateTokens(body)
-    if (tokens > skillBudget || tokens > budget) break
+    if (tokens > skillBudget) break
     skillBudget -= tokens
-    budget -= tokens
     skillSections.push(body)
   }
   if (skillSections.length > 0) {
-    sections.push(
+    take(
+      "skills",
       `## Skills you loaded earlier\n\nTheir instructions still apply. You already ran them for the request that loaded them, so don't run them again for that request.\n\n${skillSections.join("\n\n")}`,
     )
   }
@@ -140,32 +190,107 @@ export async function buildRestoration(state: SessionState, window: number, summ
   if (sections.length === 0) return undefined
   const text = [
     "<restored-context>",
-    "The conversation was compacted. lodestar read the files below fresh from disk right after the compaction, so you don't need to read them again unless they changed since. Other files you used earlier are listed by path only.",
+    "The conversation was compacted. Carry on from where you left off; don't start the task over. The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.",
     "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
     "",
     sections.join("\n\n"),
+    ...(edited.length > 0
+      ? ["", "Before you finish:", "- Check your changes against each point of the user's request.", "- Run the tests that cover your changes."]
+      : []),
     "</restored-context>",
   ].join("\n")
-  return {
-    text,
-    tokens: estimateTokens(text),
-    at: Date.now(),
-    summaryKey,
-    files,
-    references,
-    skills: skillSections.length,
-    plan,
+  return { text, tokens: estimateTokens(text), at: Date.now(), summaryKey, sections: sizes }
+}
+
+/**
+ * The "Your changes so far" section: a diff of the files the agent edited, the new files it created, and the state of
+ * the working tree. Files git can't describe come back whole. The agent's most common first step after a compaction
+ * was `git status` or `git diff`.
+ */
+async function describeChanges(state: SessionState, edited: FileRecord[], relative: (file: string) => string, limit: number) {
+  const directory = state.directory ?? process.cwd()
+  const files = edited.map((record) => record.path)
+  let context = RESTORE_DIFF_CONTEXT
+  let changes = await changesOf(directory, files, context)
+  const diffTokens = (diffs: Map<string, string>) => estimateTokens([...diffs.values()].join("\n"))
+  if (changes && diffTokens(changes.diffs) > RESTORE_DIFF_TOKENS) {
+    context = 3
+    changes = (await changesOf(directory, files, context)) ?? changes
   }
+
+  const parts: string[] = []
+  const restored: string[] = []
+  // Some room is left for the headings.
+  let room = limit - 200
+  const diffBudget = Math.min(RESTORE_DIFF_TOKENS, room)
+  let budget = diffBudget
+  if (changes) {
+    const diffs: string[] = []
+    const left: string[] = []
+    for (const file of files) {
+      const diff = changes.diffs.get(file)
+      if (!diff) continue
+      if (estimateTokens(diff) <= budget) {
+        budget -= estimateTokens(diff)
+        diffs.push(diff)
+        restored.push(file)
+      } else left.push(file)
+    }
+    room -= diffBudget - budget
+    if (diffs.length > 0) {
+      parts.push(`\`git diff HEAD\` of the files you edited, with ${context} lines of context:\n\n${fenced(diffs.join("\n"), "diff")}`)
+    }
+    if (left.length > 0) parts.push(`Also changed, too large to show here: ${left.map(relative).join(", ")}. Run \`git diff\` on them if you need to.`)
+
+    const created: string[] = []
+    for (const file of changes.untracked) {
+      const text = await readText(file)
+      if (text === undefined) continue
+      const content = numbered(linesOf(text))
+      const tokens = estimateTokens(content)
+      if (tokens <= RESTORE_NEW_FILE_TOKENS && tokens <= budget && tokens <= room) {
+        budget -= tokens
+        room -= tokens
+        created.push(`### ${relative(file)}\n\n${fenced(content)}`)
+        restored.push(file)
+      }
+    }
+    if (created.length > 0) parts.push(`New files you created, with line numbers:\n\n${created.join("\n\n")}`)
+
+    if (changes.status.length > 0) {
+      const lines = changes.status.slice(0, RESTORE_STATUS_LINES)
+      const more = changes.status.length - lines.length
+      const status = `\`git status --short\`:\n\n${fenced(lines.join("\n") + (more > 0 ? `\n… and ${more} more` : ""))}`
+      if (estimateTokens(status) <= room) {
+        room -= estimateTokens(status)
+        parts.push(status)
+      }
+    }
+  }
+
+  // Files git can't describe: all of them when there's no repository.
+  const whole: string[] = []
+  const undescribed = changes ? changes.outside : files
+  for (const file of undescribed.slice(0, RESTORE_FILES)) {
+    const text = await readText(file)
+    if (text === undefined) continue
+    const content = numbered(linesOf(text))
+    const tokens = estimateTokens(content)
+    if (tokens <= RESTORE_FILE_TOKENS && tokens <= room) {
+      room -= tokens
+      whole.push(`### ${relative(file)}\n\n${fenced(content)}`)
+      restored.push(file)
+    }
+  }
+  if (whole.length > 0) parts.push(`${changes ? "Other files you edited" : "Files you edited"}, as they are now, with line numbers:\n\n${whole.join("\n\n")}`)
+
+  if (parts.length === 0) return undefined
+  return { text: `## Your changes so far\n\n${parts.join("\n\n")}`, files: restored }
 }
 
 export function describeRestoration(restoration: Restoration): string {
-  const parts = [
-    restoration.files > 0 ? `${restoration.files} file${restoration.files === 1 ? "" : "s"}` : undefined,
-    restoration.plan ? "the plan" : undefined,
-    restoration.skills > 0 ? `${restoration.skills} skill${restoration.skills === 1 ? "" : "s"}` : undefined,
-  ].filter(Boolean)
-  const what = parts.length > 0 ? parts.join(", ") : "progress notes"
-  return `lodestar restored ${what} after compaction (~${Math.max(1, Math.round(restoration.tokens / 1000))}k tokens).`
+  const names = Object.keys(restoration.sections)
+  return `lodestar restored ${names.length > 0 ? names.join(", ") : "nothing"} after compaction (~${Math.max(1, Math.round(restoration.tokens / 1000))}k tokens).`
 }
 
 /** Identifies a summary, to tell whether a snapshot belongs to the current checkpoint. */

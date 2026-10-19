@@ -13,12 +13,28 @@ export interface FileRecord {
   seen?: DiskState
   /** A change already reported to the agent, so the notice isn't repeated. */
   reported?: DiskState | "deleted"
+  /** Line ranges the agent read, oldest first, with overlapping ones merged. */
+  ranges?: [number, number][]
 }
 
 export interface SkillRecord {
   name: string
   text: string
   at: number
+}
+
+/** One of the agent's tool calls, described for the restoration, such as "shell `go test ./...`" and "exit 1". */
+export interface CallRecord {
+  what: string
+  outcome?: string
+}
+
+/** The agent's latest test command and how it ended. */
+export interface TestRun {
+  command: string
+  exit?: number
+  /** The end of its output. */
+  tail: string
 }
 
 export interface Snapshot {
@@ -40,6 +56,11 @@ export interface SessionState {
   toolStreak: number
   /** A recap was already requested during this streak. */
   recited: boolean
+  /** The user's requests in this session, word for word: the first one, then the latest few. */
+  requests?: string[]
+  /** The agent's latest tool calls, oldest first. */
+  calls?: CallRecord[]
+  lastTest?: TestRun
   /** When the agent's recent shell commands ran. A file that changed during one was changed by the agent. */
   shellRuns?: { start: number; end: number }[]
   /** Estimated size of the conversation at the last compaction. */
