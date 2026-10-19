@@ -40,6 +40,8 @@ export interface SessionState {
   toolStreak: number
   /** A recap was already requested during this streak. */
   recited: boolean
+  /** When the agent's recent shell commands ran. A file that changed during one was changed by the agent. */
+  shellRuns?: { start: number; end: number }[]
   /** Estimated size of the conversation at the last compaction. */
   compactedTokens?: number
   /** What gets put back after the last compaction. It stays fixed until the next one. */

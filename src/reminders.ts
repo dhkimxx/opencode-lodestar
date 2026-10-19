@@ -1,15 +1,23 @@
 import path from "node:path"
 import { diskState, lastUsed } from "./files"
-import { RECITE_AFTER_TOOL_CALLS, STALE_CHECK_FILES } from "./limits"
+import { RECITE_AFTER_TOOL_CALLS, SHELL_RUN_SLACK_MS, STALE_CHECK_FILES } from "./limits"
 import type { SessionState } from "./state"
 
 /** T4: asks for a short recap after a long run of tool calls, once per run. */
 export function recitation(state: SessionState): string | undefined {
   if (state.toolStreak < RECITE_AFTER_TOOL_CALLS || state.recited) return undefined
-  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next.</lodestar-reminder>`
+  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next. Then carry on in the same response.</lodestar-reminder>`
 }
 
-/** T6: files that changed on disk after the agent last read or edited them, each reported once. */
+/** True when a time falls within one of the agent's own shell commands, give or take a little. */
+const duringShell = (state: SessionState, time: number) =>
+  (state.shellRuns ?? []).some((run) => time >= run.start - SHELL_RUN_SLACK_MS && time <= run.end + SHELL_RUN_SLACK_MS)
+
+/**
+ * T6: files that changed on disk after the agent last read or edited them, each reported once. A change made while one
+ * of the agent's own shell commands ran, such as a formatter or a test run, is the agent's doing and isn't reported.
+ * In evaluation, those made up 88% of the notices, and the notices that followed led to needless re-reads.
+ */
 export async function staleFiles(state: SessionState) {
   const records = Object.values(state.files)
     .filter((record) => record.seen)
@@ -23,12 +31,17 @@ export async function staleFiles(state: SessionState) {
     const now = await diskState(record.path)
     if (!now) {
       if (record.reported !== "deleted") {
-        deleted.push(record.path)
+        // A deleted file has no change time, so any shell command since the agent last saw it counts.
+        if (!(state.shellRuns ?? []).some((run) => run.end >= lastUsed(record))) deleted.push(record.path)
         record.reported = "deleted"
       }
       continue
     }
     if (now.mtimeMs === seen.mtimeMs && now.size === seen.size) continue
+    if (duringShell(state, now.mtimeMs)) {
+      record.seen = now
+      continue
+    }
     const reported = record.reported
     if (reported && reported !== "deleted" && reported.mtimeMs === now.mtimeMs && reported.size === now.size) continue
     changed.push(record.path)

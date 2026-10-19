@@ -6,7 +6,27 @@ import { Plugin } from "@opencode/plugin";
 // src/files.ts
 import { readFile, stat } from "fs/promises";
 import path from "path";
+
+// src/limits.ts
+var RESTORE_FILES = 5;
+var RESTORE_OTHER_FILES = 30;
+var RESTORE_FILE_TOKENS = 5000;
+var RESTORE_SKILL_TOKENS = 5000;
+var RESTORE_SKILLS_TOTAL = 25000;
+var RESTORE_PLAN_TOKENS = 5000;
+var RESTORE_SHARE = 0.2;
+var RESTORE_MIN_TOKENS = 1e4;
+var RESTORE_MAX_TOKENS = 40000;
+var RECITE_AFTER_TOOL_CALLS = 8;
+var STALE_CHECK_FILES = 50;
+var SHELL_RUNS_KEPT = 20;
+var SHELL_RUN_SLACK_MS = 2000;
+var PROGRESS_NOTES = 3;
+var PROGRESS_NOTE_CHARS = 600;
+
+// src/files.ts
 var EDIT_TOOLS = new Set(["edit", "write", "multiedit"]);
+var SHELL_TOOLS = new Set(["shell", "bash"]);
 var MAX_RECORDS = 200;
 async function diskState(file) {
   try {
@@ -42,6 +62,9 @@ function touchedFiles(tool, input, output, directory) {
   }
   return { read: [], edited: [] };
 }
+function recordShellRun(state, start, end) {
+  state.shellRuns = [...state.shellRuns ?? [], { start, end }].slice(-SHELL_RUNS_KEPT);
+}
 async function recordTool(state, input) {
   const touched = touchedFiles(input.tool, input.input, input.output, input.directory);
   for (const [files, field] of [
@@ -63,21 +86,6 @@ async function recordTool(state, input) {
   }
   return touched.read.length + touched.edited.length > 0;
 }
-
-// src/limits.ts
-var RESTORE_FILES = 5;
-var RESTORE_OTHER_FILES = 30;
-var RESTORE_FILE_TOKENS = 5000;
-var RESTORE_SKILL_TOKENS = 5000;
-var RESTORE_SKILLS_TOTAL = 25000;
-var RESTORE_PLAN_TOKENS = 5000;
-var RESTORE_SHARE = 0.2;
-var RESTORE_MIN_TOKENS = 1e4;
-var RESTORE_MAX_TOKENS = 40000;
-var RECITE_AFTER_TOOL_CALLS = 8;
-var STALE_CHECK_FILES = 50;
-var PROGRESS_NOTES = 3;
-var PROGRESS_NOTE_CHARS = 600;
 
 // src/messages.ts
 var CHECKPOINT = "<conversation-checkpoint>";
@@ -110,8 +118,9 @@ import path2 from "path";
 function recitation(state) {
   if (state.toolStreak < RECITE_AFTER_TOOL_CALLS || state.recited)
     return;
-  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next.</lodestar-reminder>`;
+  return `<lodestar-reminder>You have made ${state.toolStreak} tool calls since you last wrote to the user. Before your next tool call, write one or two sentences: what is done so far, and what you will do next. Then carry on in the same response.</lodestar-reminder>`;
 }
+var duringShell = (state, time) => (state.shellRuns ?? []).some((run) => time >= run.start - SHELL_RUN_SLACK_MS && time <= run.end + SHELL_RUN_SLACK_MS);
 async function staleFiles(state) {
   const records = Object.values(state.files).filter((record) => record.seen).sort((a, b) => lastUsed(b) - lastUsed(a)).slice(0, STALE_CHECK_FILES);
   const changed = [];
@@ -123,13 +132,18 @@ async function staleFiles(state) {
     const now = await diskState(record.path);
     if (!now) {
       if (record.reported !== "deleted") {
-        deleted.push(record.path);
+        if (!(state.shellRuns ?? []).some((run) => run.end >= lastUsed(record)))
+          deleted.push(record.path);
         record.reported = "deleted";
       }
       continue;
     }
     if (now.mtimeMs === seen.mtimeMs && now.size === seen.size)
       continue;
+    if (duringShell(state, now.mtimeMs)) {
+      record.seen = now;
+      continue;
+    }
     const reported = record.reported;
     if (reported && reported !== "deleted" && reported.mtimeMs === now.mtimeMs && reported.size === now.size)
       continue;
@@ -422,9 +436,29 @@ var src_default = Plugin.define({
       building.set(sessionID, job);
       return job;
     }
+    async function restoreInto(sessionID, messages, model) {
+      const index = checkpointIndex(messages);
+      const checkpoint = messages[index];
+      if (!checkpoint)
+        return;
+      const snapshot = await ensureSnapshot(sessionID, summaryFromCheckpoint(textOf(checkpoint)), model);
+      const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined;
+      if (message)
+        messages.splice(index + 1, 0, message);
+    }
+    const shellStarts = new Map;
+    registrations.push(await ctx.tool.hook("execute.before", async (event) => {
+      if (SHELL_TOOLS.has(event.tool))
+        shellStarts.set(event.id, Date.now());
+    }));
     registrations.push(await ctx.tool.hook("execute.after", async (event) => {
       const state = await store.get(event.sessionID);
       state.toolStreak++;
+      if (SHELL_TOOLS.has(event.tool)) {
+        const now = Date.now();
+        recordShellRun(state, shellStarts.get(event.id) ?? now, now);
+        shellStarts.delete(event.id);
+      }
       if (event.status === "completed") {
         await recordTool(state, {
           tool: event.tool,
@@ -438,23 +472,18 @@ var src_default = Plugin.define({
     }));
     registrations.push(await ctx.session.hook("compaction", async (event) => {
       const state = await store.get(event.sessionID);
-      state.compactedTokens = estimateTokens(JSON.stringify(event.messages.map((message) => message.content)));
+      const messages = event.messages;
+      state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => message.content)));
       store.save(event.sessionID);
+      if (on("T2"))
+        await restoreInto(event.sessionID, messages, event.model);
     }));
     registrations.push(await ctx.session.hook("context", async (event) => {
       const state = await store.get(event.sessionID);
       const messages = event.messages;
       let changed = false;
-      if (on("T2")) {
-        const index = checkpointIndex(messages);
-        const checkpoint = messages[index];
-        if (checkpoint) {
-          const snapshot = await ensureSnapshot(event.sessionID, summaryFromCheckpoint(textOf(checkpoint)), event.model);
-          const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined;
-          if (message)
-            messages.splice(index + 1, 0, message);
-        }
-      }
+      if (on("T2"))
+        await restoreInto(event.sessionID, messages, event.model);
       if (on("T6")) {
         const files = await staleFiles(state);
         const notice = staleNotice(state, files);

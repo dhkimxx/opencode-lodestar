@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, unlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { recordTool } from "./files"
+import { recordShellRun, recordTool } from "./files"
 import { recitation, staleFiles, staleNotice } from "./reminders"
 import type { SessionState } from "./state"
 
@@ -51,5 +51,32 @@ test("the agent's own edits don't count as outside changes", async () => {
   await recordTool(session, { tool: "read", input: { path: "a.ts" }, output: undefined, directory: dir, now: 1 })
   await writeFile(target, "edited by the agent")
   await recordTool(session, { tool: "edit", input: { path: "a.ts" }, output: undefined, directory: dir, now: 2 })
+  expect(await staleFiles(session)).toEqual({ changed: [], deleted: [] })
+})
+
+test("a change made while the agent's own shell command ran isn't reported", async () => {
+  const session = state()
+  const target = path.join(dir, "a.ts")
+  await writeFile(target, "one")
+  await recordTool(session, { tool: "read", input: { path: "a.ts" }, output: undefined, directory: dir, now: 1 })
+  const start = Date.now()
+  await writeFile(target, "reformatted by the agent's own command")
+  recordShellRun(session, start, Date.now())
+  expect(await staleFiles(session)).toEqual({ changed: [], deleted: [] })
+
+  // A later change, outside any of the agent's commands, is someone else's.
+  await writeFile(target, "changed by the user afterwards")
+  const later = new Date(Date.now() + 60_000)
+  await utimes(target, later, later)
+  expect((await staleFiles(session)).changed).toEqual([target])
+})
+
+test("a file deleted after the agent ran a shell command isn't reported", async () => {
+  const session = state()
+  const target = path.join(dir, "old.ts")
+  await writeFile(target, "x")
+  await recordTool(session, { tool: "read", input: { path: "old.ts" }, output: undefined, directory: dir, now: 1 })
+  recordShellRun(session, 2, 3)
+  await unlink(target)
   expect(await staleFiles(session)).toEqual({ changed: [], deleted: [] })
 })

@@ -1,8 +1,10 @@
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
+import { SHELL_RUNS_KEPT } from "./limits"
 import type { DiskState, FileRecord, SessionState } from "./state"
 
 const EDIT_TOOLS = new Set(["edit", "write", "multiedit"])
+export const SHELL_TOOLS = new Set(["shell", "bash"])
 /** Records kept per session. Older ones are dropped first. */
 const MAX_RECORDS = 200
 
@@ -41,6 +43,11 @@ export function touchedFiles(tool: string, input: unknown, output: unknown, dire
     return { read: [], edited }
   }
   return { read: [], edited: [] }
+}
+
+/** Notes when one of the agent's shell commands ran. */
+export function recordShellRun(state: SessionState, start: number, end: number) {
+  state.shellRuns = [...(state.shellRuns ?? []), { start, end }].slice(-SHELL_RUNS_KEPT)
 }
 
 /** Notes what a tool call read or changed, and how the file looked on disk right after. */

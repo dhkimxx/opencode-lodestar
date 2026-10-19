@@ -1,7 +1,7 @@
 import { appendFile } from "node:fs/promises"
 import type { Message } from "@opencode/ai"
 import { Plugin } from "@opencode/plugin"
-import { recordTool } from "./files"
+import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"
 import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES } from "./limits"
 import { checkpointIndex, insertNearEnd, textOf, userMessage } from "./messages"
 import { recitation, staleFiles, staleNotice } from "./reminders"
@@ -86,11 +86,34 @@ export default Plugin.define({
       return job
     }
 
+    /** Puts the restoration right after the checkpoint, where it stays until the next compaction. */
+    async function restoreInto(sessionID: string, messages: Message[], model: ModelRef | undefined) {
+      const index = checkpointIndex(messages)
+      const checkpoint = messages[index]
+      if (!checkpoint) return
+      const snapshot = await ensureSnapshot(sessionID, summaryFromCheckpoint(textOf(checkpoint)), model)
+      const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined
+      if (message) messages.splice(index + 1, 0, message)
+    }
+
+    // When each shell command started, so T6 can tell the agent's own changes, such as a formatter's, from outside ones.
+    const shellStarts = new Map<string, number>()
+    registrations.push(
+      await ctx.tool.hook("execute.before", async (event) => {
+        if (SHELL_TOOLS.has(event.tool)) shellStarts.set(event.id, Date.now())
+      }),
+    )
+
     // T1: what the agent reads and changes. T4 counts the calls; T6 remembers how each file looked.
     registrations.push(
       await ctx.tool.hook("execute.after", async (event) => {
         const state = await store.get(event.sessionID)
         state.toolStreak++
+        if (SHELL_TOOLS.has(event.tool)) {
+          const now = Date.now()
+          recordShellRun(state, shellStarts.get(event.id) ?? now, now)
+          shellStarts.delete(event.id)
+        }
         if (event.status === "completed") {
           await recordTool(state, {
             tool: event.tool,
@@ -105,11 +128,16 @@ export default Plugin.define({
     )
 
     // How big the conversation was when OpenCode compacted it. That sets how much T2 may restore.
+    // The compaction request is built apart from the agent's requests, so it gets the restoration too. Without it, the
+    // request no longer matched the ones before it after the checkpoint, and the provider billed everything from there
+    // on as uncached input: 38k tokens per compaction in evaluation, against 5k without lodestar.
     registrations.push(
       await ctx.session.hook("compaction", async (event) => {
         const state = await store.get(event.sessionID)
-        state.compactedTokens = estimateTokens(JSON.stringify(event.messages.map((message) => (message as { content?: unknown }).content)))
+        const messages = event.messages as Message[]
+        state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
         store.save(event.sessionID)
+        if (on("T2")) await restoreInto(event.sessionID, messages, event.model)
       }),
     )
 
@@ -119,15 +147,7 @@ export default Plugin.define({
         const state = await store.get(event.sessionID)
         const messages = event.messages as Message[]
         let changed = false
-        if (on("T2")) {
-          const index = checkpointIndex(messages)
-          const checkpoint = messages[index]
-          if (checkpoint) {
-            const snapshot = await ensureSnapshot(event.sessionID, summaryFromCheckpoint(textOf(checkpoint)), event.model)
-            const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined
-            if (message) messages.splice(index + 1, 0, message)
-          }
-        }
+        if (on("T2")) await restoreInto(event.sessionID, messages, event.model)
         if (on("T6")) {
           const files = await staleFiles(state)
           const notice = staleNotice(state, files)

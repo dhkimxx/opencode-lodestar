@@ -19,6 +19,10 @@ export const RECITE_AFTER_TOOL_CALLS = 8
 
 /** Files checked for outside changes before each request, the most recently used first. */
 export const STALE_CHECK_FILES = 50
+/** The agent's recent shell commands, kept to tell its own file changes, such as a formatter's, from outside ones. */
+export const SHELL_RUNS_KEPT = 20
+/** Allowance around a shell command's start and end when matching a file's change time to it. */
+export const SHELL_RUN_SLACK_MS = 2_000
 
 /** Short progress notes kept from the agent's own messages. */
 export const PROGRESS_NOTES = 3
