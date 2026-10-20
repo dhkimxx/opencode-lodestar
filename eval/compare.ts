@@ -1,16 +1,24 @@
 // Compares A and B run by run: the same task, model, and repeat, once without lodestar and once with it.
-// usage: bun eval/compare.ts [--tasks] <results.jsonl>...
+// usage: bun eval/compare.ts [--tasks] [--model <part of a model name>] <results.jsonl>...
 import type { Metrics } from "./lib/metrics"
 import type { RunResult } from "./lib/result"
 
 type Pair = { a: RunResult; b: RunResult }
 
-const showTasks = Bun.argv.includes("--tasks")
+const args = Bun.argv.slice(2)
+const showTasks = args.includes("--tasks")
+const modelAt = args.indexOf("--model")
+const onlyModel = modelAt >= 0 ? args[modelAt + 1] : undefined
+const files = args.filter((arg, index) => arg !== "--tasks" && arg !== "--model" && index !== modelAt + 1)
 const results: RunResult[] = []
-for (const file of Bun.argv.slice(2).filter((arg) => arg !== "--tasks")) {
-  for (const line of (await Bun.file(file).text()).split("\n")) if (line.trim()) results.push(JSON.parse(line) as RunResult)
+for (const file of files) {
+  for (const line of (await Bun.file(file).text()).split("\n")) {
+    if (!line.trim()) continue
+    const result = JSON.parse(line) as RunResult
+    if (!onlyModel || result.model.includes(onlyModel)) results.push(result)
+  }
 }
-if (results.length === 0) throw new Error("usage: bun eval/compare.ts [--tasks] <results.jsonl>...")
+if (results.length === 0) throw new Error("usage: bun eval/compare.ts [--tasks] [--model <part of a model name>] <results.jsonl>...")
 
 const byName = new Map<string, { a?: RunResult; b?: RunResult }>()
 for (const result of results) {
@@ -47,9 +55,10 @@ function meanDifference(differences: number[]) {
 const minutes = (result: RunResult) => (result.metrics?.durationMs ?? 0) / 60_000
 const metric = (pick: (metrics: Metrics) => number) => (result: RunResult) => (result.metrics ? pick(result.metrics) : 0)
 const thousands = (digits: number) => (value: number) => `${(value / 1000).toFixed(digits)}k`
+// Providers with explicit caching, such as Qwen through OpenCode Go, report new prompt tokens as cache writes.
 const MEASURES: [string, (result: RunResult) => number, (value: number) => string][] = [
-  ["Prompt tokens", metric((metrics) => metrics.tokens.input + metrics.tokens.cacheRead), thousands(0)],
-  ["Uncached prompt tokens", metric((metrics) => metrics.tokens.input), thousands(0)],
+  ["Prompt tokens", metric((metrics) => metrics.tokens.input + metrics.tokens.cacheRead + metrics.tokens.cacheWrite), thousands(0)],
+  ["Uncached prompt tokens", metric((metrics) => metrics.tokens.input + metrics.tokens.cacheWrite), thousands(0)],
   ["Output tokens", metric((metrics) => metrics.tokens.output), thousands(1)],
   ["Tool calls", metric((metrics) => metrics.toolCalls), (value) => value.toFixed(0)],
   ["Files read again after compaction", metric((metrics) => metrics.rereadsAfterCompaction), (value) => value.toFixed(1)],
@@ -59,6 +68,7 @@ const MEASURES: [string, (result: RunResult) => number, (value: number) => strin
 ]
 
 const compacted = (pair: Pair) => (pair.a.metrics?.compactions ?? 0) + (pair.b.metrics?.compactions ?? 0) > 0
+const bothCompacted = (pair: Pair) => (pair.a.metrics?.compactions ?? 0) > 0 && (pair.b.metrics?.compactions ?? 0) > 0
 
 function summarize(title: string, matched: Pair[]) {
   if (matched.length === 0) return
@@ -82,9 +92,10 @@ function summarize(title: string, matched: Pair[]) {
   console.log()
 }
 
-console.log("## All models\n")
+console.log(onlyModel ? `## Models matching ${onlyModel}\n` : "## All models\n")
 summarize("All pairs", pairs)
 summarize("Pairs where A or B compacted", pairs.filter(compacted))
+summarize("Pairs where both compacted", pairs.filter(bothCompacted))
 
 const mark = (result: RunResult) => (result.check?.success ? "yes" : "no")
 for (const model of [...new Set(pairs.map((pair) => pair.a.model))].sort()) {
@@ -92,6 +103,7 @@ for (const model of [...new Set(pairs.map((pair) => pair.a.model))].sort()) {
   console.log(`## ${model}\n`)
   summarize("All pairs", matched)
   summarize("Pairs where A or B compacted", matched.filter(compacted))
+  summarize("Pairs where both compacted", matched.filter(bothCompacted))
   if (!showTasks) continue
   console.log("| Task | Resolved A | Resolved B | Minutes A | Minutes B | Compactions A | Compactions B | Peak prompt A | Peak prompt B |")
   console.log("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")

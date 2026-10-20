@@ -1,11 +1,12 @@
-// Picks the tasks in tasks.json: long but still solvable ones from every repository. See README.md.
-// usage: bun eval/select.ts [SWE-bench_Pro-os/v2] [tasks per repository] > eval/tasks.json
+// Picks the tasks in tasks.json and tasks-hard.json from every repository. See README.md.
+// usage: bun eval/select.ts [--hard] [SWE-bench_Pro-os/v2] > eval/tasks.json (or eval/tasks-hard.json)
 import { readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
 
-const root = Bun.argv[2] ?? path.join(homedir(), ".cache/lodestar-eval/SWE-bench_Pro-os/v2")
-const perRepo = Number(Bun.argv[3] ?? 3)
+const args = Bun.argv.slice(2)
+const hardMode = args.includes("--hard")
+const root = args.find((arg) => arg !== "--hard") ?? path.join(homedir(), ".cache/lodestar-eval/SWE-bench_Pro-os/v2")
 // Only four tasks, too few to pick from.
 const SKIP = new Set(["tutao/tutanota"])
 
@@ -22,17 +23,24 @@ for (const id of (await readdir(path.join(root, "tasks"))).sort()) {
   })
 }
 
+// tasks-hard.json leaves out what tasks.json already has.
+const taken = hardMode ? new Set((await Bun.file(path.join(import.meta.dir, "tasks.json")).json()) as string[]) : new Set<string>()
 const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const picked: string[] = []
 for (const repo of [...new Set(tasks.map((task) => task.repo))].sort()) {
   if (SKIP.has(repo)) continue
   const inRepo = tasks.filter((task) => task.repo === repo)
   const sizes = inRepo.map((task) => task.lines).sort((a, b) => a - b)
-  const p80 = sizes[Math.floor(0.8 * (sizes.length - 1))] ?? 0
-  // HARD-51 tasks were failed by most model families, so A and B would both fail them.
+  const target = sizes[Math.floor((hardMode ? 0.95 : 0.8) * (sizes.length - 1))] ?? 0
+  // HARD-51 tasks were failed by most model families, so A and B would both fail most of them.
   const candidates = inRepo
-    .filter((task) => !hard.has(task.id) && task.files >= 3)
-    .sort((a, b) => Math.abs(a.lines - p80) - Math.abs(b.lines - p80) || byId(a.id, b.id))
-  picked.push(...candidates.slice(0, perRepo).map((task) => task.id))
+    .filter((task) => !hard.has(task.id) && !taken.has(task.id) && task.files >= (hardMode ? 4 : 3))
+    .sort((a, b) => Math.abs(a.lines - target) - Math.abs(b.lines - target) || byId(a.id, b.id))
+  picked.push(...candidates.slice(0, 3).map((task) => task.id))
+  // The hard set adds the HARD-51 task with the most work in each repository.
+  if (hardMode) {
+    const hardest = inRepo.filter((task) => hard.has(task.id)).sort((a, b) => b.lines - a.lines || byId(a.id, b.id))[0]
+    if (hardest) picked.push(hardest.id)
+  }
 }
 console.log(JSON.stringify(picked, null, 1))

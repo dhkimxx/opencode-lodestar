@@ -9,7 +9,7 @@ Each run follows the benchmark's own protocol:
 - **The agent gets 50 minutes.** When time runs out, its partial work is graded.
 - **Grading happens in a fresh container.** The agent's diff is applied there and the task's own verifier runs. Grading has normal network access, since some Go tasks fetch modules during tests.
 
-Results for the current release are in [results/v0.1.0.md](results/v0.1.0.md).
+Results for the current release are in [results/v0.2.0.md](results/v0.2.0.md).
 
 ## Setup
 
@@ -34,8 +34,8 @@ Results for the current release are in [results/v0.1.0.md](results/v0.1.0.md).
 ## Running
 
 ```sh
-bun eval/run.ts --tasks eval/tasks.json \
-  --models 'opencode-go/glm-5.3-flash#high,openai/gpt-6.1-sol#high' --configs A,B --concurrency 3 --prune-images
+bun eval/run.ts --tasks eval/tasks-hard.json \
+  --models 'opencode-go/deepseek-v4.1-flash#high' --configs A,B --compact-at 40000 --concurrency 3 --prune-images
 ```
 
 | Option | Default | What it does |
@@ -43,13 +43,21 @@ bun eval/run.ts --tasks eval/tasks.json \
 | `--tasks` | | Comma-separated task IDs, or a JSON file with an array of them. |
 | `--models` | `opencode-go/glm-5.3-flash#high` | Comma-separated models, with the reasoning variant after `#`. |
 | `--configs` | `A,B` | `A` is OpenCode alone, `B` is OpenCode with lodestar. `B-T2`, `B-T4`, and `B-T6` switch off one feature, to measure what it adds. |
-| `--threshold` | `50000` | Auto compaction starts at this many tokens. |
+| `--compact-at` | | The harness compacts the session whenever a request reaches this many tokens, and OpenCode keeps its own threshold. Use this for new runs. |
+| `--threshold` | `50000` | Without `--compact-at`, OpenCode's own auto compaction starts at this many tokens. |
 | `--budget` | `50` | Minutes the agent gets. |
 | `--concurrency` | `3` | Runs at a time. Each container may use up to 6 GB of memory. |
 | `--prune-images` | off | Removes each task's image once all of its runs are done. The images are several GB each. |
 | `--out` | `eval/.runs/<time>` | Where runs are written. Run again with the same directory to finish what is left: runs that already counted are skipped. |
 
-The threshold is far below the models' windows, which run from 272k to 1M tokens, because these sessions rarely grow that large: 151 of the 240 runs in the latest results never reached 50,000 tokens. At a realistic threshold, almost none would compact.
+Compaction has to be forced early, because sessions on these tasks rarely grow anywhere near the models' windows of 272k to 1M tokens. At a realistic threshold, almost none would compact. There are two ways to force it.
+
+- **`--compact-at` is the better one.** OpenCode keeps its default threshold. The harness reads the size of each request from the agent's events and asks for a compaction when it reaches the given number.
+  - It checks every five seconds, so a compaction can come a step or two after the size is reached.
+  - OpenCode then has room to send the compaction request as it is.
+- **`--threshold` lowers OpenCode's own threshold.** OpenCode also caps its compaction request at that threshold, and it estimates the request's size at four characters per token. When the estimate doesn't fit, it rebuilds the history as plain text, which loses the prompt cache with or without lodestar.
+  - At 40,000 tokens, this happened to 46% of DeepSeek V4.1 Flash's compactions.
+  - The v0.2.0 results used `--threshold 40000`.
 
 Each run reads its model's limits inside the container, with the run's own login, because they depend on it: through a ChatGPT login, OpenAI models accept less than through the API.
 
@@ -61,9 +69,14 @@ Each run directory keeps `turn.jsonl` (the agent's events), `export.json` (the s
 
 ## Tools
 
-- `compare.ts` pairs A and B runs of the same task and model, and reports the mean difference in each measure with a 95% bootstrap interval. It reports all pairs, and separately the pairs where a compaction happened, since lodestar only restores after one. Pass `--tasks` to list every pair.
+- `compare.ts` pairs A and B runs of the same task and model. It reports the mean difference in each measure with a 95% bootstrap interval.
+  - It reports all pairs, then the pairs where A or B compacted, then the pairs where both did, since lodestar only restores after a compaction.
+  - `--model` keeps only the models whose name contains the given text, and `--tasks` lists every pair.
+  - Uncached prompt tokens include cache writes, because providers with explicit caching report new prompt tokens that way.
 - `regrade.ts` grades finished runs again from their saved patches, for example after a fix to grading. The agents don't run again.
-- `select.ts` makes `tasks.json`: three tasks from each repository except `tutao/tutanota`, which has only four tasks. They come from the tasks that touch at least three files and are not in the HARD-51 subset, which most model families fail. In each repository, the three picked are the ones whose reference patch size is closest to that repository's 80th percentile. That makes them long but still solvable.
+- `select.ts` makes the task lists. Both take tasks from every repository except `tutao/tutanota`, which has only four tasks, and both leave out the HARD-51 subset, which most model families fail, unless noted.
+  - `tasks.json` holds three tasks per repository, from those that touch at least three files: the ones whose reference patch size is closest to that repository's 80th percentile. That makes them long but still solvable.
+  - `tasks-hard.json` (`select.ts --hard`) holds four tasks per repository, none of them in `tasks.json`. Three come from the tasks that touch at least four files, picked closest to the 95th percentile. The fourth is the repository's HARD-51 task with the largest reference patch.
 
 ## Evaluation switches
 
