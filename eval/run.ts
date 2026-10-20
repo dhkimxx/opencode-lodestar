@@ -35,6 +35,10 @@ const { values } = parseArgs({
     // Auto compaction starts at this many tokens. The models' windows are far larger, and most sessions never get
     // near them, so the threshold sits low enough that the longer sessions compact.
     threshold: { type: "string", default: "50000" },
+    // Compacts from the harness instead: OpenCode keeps its own threshold, and the harness asks for a compaction
+    // whenever a request reaches this many tokens. OpenCode caps its compaction request at its own threshold, so a low
+    // `--threshold` also made it rebuild most compaction requests as text, which threw away the prompt cache.
+    "compact-at": { type: "string" },
     // Minutes the agent gets, as in the benchmark's protocol. The partial work is graded when time runs out.
     budget: { type: "string", default: "50" },
     concurrency: { type: "string", default: "3" },
@@ -225,6 +229,42 @@ class Sandbox {
   }
 }
 
+/**
+ * Asks OpenCode to compact the session whenever a request reaches `limit` tokens, read from the step events that
+ * `opencode run` writes. After asking, it waits for a request under the limit, which shows the compaction happened,
+ * before it asks again. Returns how many compactions it asked for.
+ */
+async function compactWhenFull(sandbox: Sandbox, limit: number, finished: () => boolean) {
+  let asked = 0
+  let waiting = false
+  while (!finished()) {
+    await Bun.sleep(5_000)
+    if (finished()) break
+    const last = await sandbox.exec(["sh", "-c", `grep '"step_finish"' ${STATE}/turn.jsonl 2>/dev/null | tail -n 1`])
+    let event: { sessionID?: string; part?: { tokens?: { input: number; output: number; cache: { read: number; write: number } } } }
+    try {
+      event = JSON.parse(last.stdout)
+    } catch {
+      continue
+    }
+    const tokens = event.part?.tokens
+    if (!event.sessionID || !/^[\w-]+$/.test(event.sessionID) || !tokens) continue
+    // The next request carries this one's prompt and its reply.
+    const size = tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
+    if (waiting) {
+      if (size < limit) waiting = false
+      continue
+    }
+    if (size < limit) continue
+    const compacted = await sandbox.opencode(["api", "--server", SERVER, "session.compact", "--param", `sessionID=${event.sessionID}`, "-d", "{}"])
+    if (compacted.code === 0) {
+      asked++
+      waiting = true
+    }
+  }
+  return asked
+}
+
 /** The largest prompt the session sent, to see how close runs came to the compaction threshold. */
 function peakPrompt(data: SessionExport) {
   let peak = 0
@@ -254,13 +294,14 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
     await sandbox.start()
     await sandbox.login(await credentialsFor(provider))
     const window = await sandbox.window(model, root)
-    if (window <= Number(values.threshold)) throw new Error(`the threshold is above ${model}'s limit of ${window} tokens`)
+    const compactAt = values["compact-at"] ? Number(values["compact-at"]) : undefined
+    if (window <= (compactAt ?? Number(values.threshold))) throw new Error(`the threshold is above ${model}'s limit of ${window} tokens`)
     result.window = window
     // B runs lodestar. B-T4 and the like run it with one feature switched off, to measure what that feature adds.
     const plugin = config.startsWith("B")
     const disabled = config.match(/^B-(T\d)$/)?.[1]
     const serverConfig = {
-      compaction: { buffer: window - Number(values.threshold) },
+      ...(compactAt ? {} : { compaction: { buffer: window - Number(values.threshold) } }),
       lsp: false,
       websearch: false,
       share: "disabled",
@@ -276,17 +317,22 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
     started = Date.now()
     const budget = Number(values.budget) * 60
     let turn: Exec = { code: 1, stdout: "", stderr: "", timedOut: false }
+    let forced = 0
     // A connection lost before the session starts costs nothing, so the turn is sent again once.
     for (let attempt = 0; attempt < 2 && !sessionID; attempt++) {
       if (attempt > 0) await Bun.sleep(5_000)
       // Output goes to files inside the container. Through a pipe, a large output was cut off when the process exited.
-      turn = await sandbox.exec(
+      let finished = false
+      const running = sandbox.exec(
         [
           "sh", "-c", `exec timeout -k 30 "$@" > ${STATE}/turn.jsonl 2> ${STATE}/turn.err`, "sh",
           String(budget), `${TOOLS}/opencode`, "run", "--server", SERVER, "-m", model, "--auto", "--format", "json", task.instruction,
         ],
         { timeoutMs: (budget + 120) * 1000 },
       )
+      const watching = compactAt ? compactWhenFull(sandbox, compactAt, () => finished) : undefined
+      turn = await running.finally(() => (finished = true))
+      forced += (await watching) ?? 0
       await sandbox.copyOut(`${STATE}/turn.jsonl`, path.join(root, "turn.jsonl"))
       await sandbox.copyOut(`${STATE}/turn.err`, path.join(root, "turn.err"))
       const events = await Bun.file(path.join(root, "turn.jsonl"))
@@ -305,7 +351,9 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
       await sandbox.opencode(["api", "--server", SERVER, "session.interrupt", "--param", `sessionID=${sessionID}`, "-d", "{}"])
       await Bun.sleep(15_000)
     }
-    steps.push({ step: 1, kind: "turn", ms: Date.now() - started, detail: outOfTime ? "out of time" : turn.code === 0 ? undefined : `exit ${turn.code}` })
+    const ending = outOfTime ? "out of time" : turn.code === 0 ? undefined : `exit ${turn.code}`
+    const compactions = forced > 0 ? `${forced} compaction${forced === 1 ? "" : "s"} from the harness` : undefined
+    steps.push({ step: 1, kind: "turn", ms: Date.now() - started, detail: [ending, compactions].filter(Boolean).join(", ") || undefined })
     if (!sessionID || !/^[\w-]+$/.test(sessionID)) throw new Error(`the turn started no session: ${turn.stderr.trim().slice(-500)}`)
 
     const exported = await sandbox.exec(
