@@ -43,7 +43,8 @@ afterEach(async () => {
 
 describe("restoreBudget", () => {
   test("stays within its bounds", () => {
-    expect(restoreBudget(undefined, 1_000_000)).toBe(10_000)
+    expect(restoreBudget(undefined, 1_000_000)).toBe(3_000)
+    expect(restoreBudget(40_000, 1_000_000)).toBe(8_000)
     expect(restoreBudget(60_000, 1_000_000)).toBe(12_000)
     expect(restoreBudget(900_000, 1_000_000)).toBe(40_000)
     expect(restoreBudget(900_000, 100_000)).toBe(20_000)
@@ -71,6 +72,56 @@ describe("buildRestoration", () => {
     const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
     expect(text).toContain("Your last tool calls, oldest first:\n\n- read a.ts, lines 1-20\n- shell `bun test`: exit 1")
     expect(text).toContain("Your latest test run was `bun test`, which ended with exit 1. The end of its output:\n\n```\n1 fail\n3 pass\n```")
+  })
+
+  test("brings the latest steps back word for word, without reads, within a share of the conversation", async () => {
+    const session = state()
+    session.compactedTokens = 100_000
+    session.recent = [
+      { tool: "shell", what: "shell `ls`", outcome: "exit 0", text: "old output" },
+      { tool: "read", what: "read a.ts, lines 1-20" },
+      { tool: "shell", what: "shell `go test ./...`", outcome: "exit 1", text: "--- FAIL: TestParse" },
+      { what: "You wrote", text: "The parser drops the last token." },
+    ]
+    session.lastTest = { command: "go test ./...", exit: 1, tail: "--- FAIL: TestParse" }
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain(
+      "Your last steps, oldest first, with what they returned:\n\n- shell `ls`: exit 0\n\n```\nold output\n```\n\n- shell `go test ./...`: exit 1\n\n```\n--- FAIL: TestParse\n```\n\n- You wrote:\n\n```\nThe parser drops the last token.\n```",
+    )
+    expect(text).not.toContain("read a.ts")
+    expect(text).not.toContain("Your latest test run")
+
+    session.compactedTokens = 100
+    const small = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(small).not.toContain("Your last steps")
+  })
+
+  test("leaves the latest steps to OpenCode when it kept recent conversation itself", async () => {
+    const session = state()
+    session.compactedTokens = 100_000
+    session.calls = [{ what: "shell `ls`", outcome: "exit 0" }]
+    session.recent = [{ tool: "shell", what: "shell `ls`", outcome: "exit 0", text: "a.ts" }]
+    const text = (await buildRestoration(session, 1_000_000, "key", "<recent-context>\n[User]: go on\n</recent-context>"))?.text ?? ""
+    expect(text).not.toContain("Your last steps")
+    expect(text).toContain("Your last tool calls, oldest first:\n\n- shell `ls`: exit 0")
+  })
+
+  test("keeps the restoration small when compactions come right after each other", async () => {
+    await file("a.ts", "export const a = 1\n")
+    const session = state()
+    session.compactedTokens = 100_000
+    session.requests = ["Fix it."]
+    session.recent = [{ tool: "shell", what: "shell `ls`", outcome: "exit 0", text: "a.ts" }]
+    session.calls = [{ what: "shell `ls`", outcome: "exit 0" }]
+    session.notes = ["Halfway there."]
+    await edit(session, "a.ts", 1)
+    session.lean = true
+    const text = (await buildRestoration(session, 1_000_000, "key"))?.text ?? ""
+    expect(text).toContain("## Your task")
+    expect(text).toContain("Your last tool calls, oldest first:")
+    expect(text).not.toContain("## Files you changed")
+    expect(text).not.toContain("Halfway there.")
+    expect(text).toContain("## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n- a.ts (changed)")
   })
 
   test("restores the files the agent edited whole, newest edit first, with the working tree's status", async () => {
@@ -132,7 +183,7 @@ describe("buildRestoration", () => {
     expect(text).not.toContain("99: line 99")
     expect(text.indexOf("### big.ts")).toBeLessThan(text.indexOf("### new.ts"))
     expect(text).not.toContain("### old.ts")
-    expect(text).toContain("## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n- old.ts")
+    expect(text).toContain("## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n- old.ts (read)")
     expect(text).not.toContain("Before you finish:")
   })
 

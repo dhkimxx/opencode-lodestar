@@ -1,7 +1,7 @@
 import path from "node:path"
 import { contentText, readRange, SHELL_TOOLS, touchedFiles } from "./files"
-import { CALLS_KEPT, REQUEST_CHARS, RESTORE_REQUESTS, TEST_TAIL_CHARS, TEST_TAIL_LINES } from "./limits"
-import type { SessionState } from "./state"
+import { CALLS_KEPT, RECENT_CHARS, RECENT_STEP_CHARS, REQUEST_CHARS, RESTORE_REQUESTS, TEST_TAIL_CHARS, TEST_TAIL_LINES } from "./limits"
+import type { RecentStep, SessionState } from "./state"
 
 /** Shell commands that run tests. */
 const TEST_COMMAND =
@@ -18,6 +18,31 @@ function oneLine(text: string, chars: number) {
 function tail(text: string) {
   const lines = text.replace(/\s+$/, "").split("\n").slice(-TEST_TAIL_LINES).join("\n")
   return lines.length > TEST_TAIL_CHARS ? `…${lines.slice(-TEST_TAIL_CHARS)}` : lines
+}
+
+/** Keeps the start and the end of a long output, more of the start, as most tools put the key lines first. */
+function keepHeadAndTail(text: string, chars: number) {
+  if (text.length <= chars) return text
+  const head = Math.floor(chars * 0.6)
+  const tail = chars - head
+  return `${text.slice(0, head)}\n[… ${text.length - head - tail} characters left out …]\n${text.slice(-tail)}`
+}
+
+/** Adds a step to the latest steps, dropping the oldest ones past the size limit. */
+function addRecent(state: SessionState, step: RecentStep) {
+  const steps = [...(state.recent ?? []), step]
+  let size = steps.reduce((sum, item) => sum + item.what.length + (item.text?.length ?? 0), 0)
+  while (steps.length > 1 && size > RECENT_CHARS) {
+    const dropped = steps.shift()
+    size -= (dropped?.what.length ?? 0) + (dropped?.text?.length ?? 0)
+  }
+  state.recent = steps
+}
+
+/** Notes what the agent wrote, for the latest steps. */
+export function recordText(state: SessionState, text: string) {
+  const trimmed = text.trim()
+  if (trimmed) addRecent(state, { what: "You wrote", text: keepHeadAndTail(trimmed, RECENT_STEP_CHARS) })
 }
 
 /** A short description of a tool call, such as "read src/a.ts, lines 40-120" or "shell `go test ./...`". */
@@ -51,6 +76,14 @@ export function recordCall(
   const outcome = call.error !== undefined ? `failed: ${oneLine(call.error, 200)}` : exit !== undefined ? `exit ${exit}` : undefined
   const what = describeCall(call.tool, call.input, call.output, call.content, call.directory)
   state.calls = [...(state.calls ?? []), { what, ...(outcome ? { outcome } : {}) }].slice(-CALLS_KEPT)
+  // What a read returned is restored from disk instead, so only the call is kept.
+  const returned = call.tool === "read" ? "" : call.error ?? contentText(call.content).trim()
+  addRecent(state, {
+    tool: call.tool,
+    what,
+    ...(outcome ? { outcome } : {}),
+    ...(returned ? { text: keepHeadAndTail(returned, RECENT_STEP_CHARS) } : {}),
+  })
 
   const command = (call.input as { command?: unknown } | undefined)?.command
   if (SHELL_TOOLS.has(call.tool) && typeof command === "string" && isTestCommand(command)) {

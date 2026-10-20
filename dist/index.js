@@ -23,14 +23,19 @@ var RESTORE_READ_TOKENS = 1200;
 var RANGES_KEPT = 4;
 var RESTORE_LINE_CHARS = 1000;
 var RESTORE_FILES = 5;
-var RESTORE_OTHER_FILES = 30;
+var RESTORE_OTHER_FILES = 20;
 var RESTORE_FILE_TOKENS = 5000;
 var RESTORE_SKILL_TOKENS = 5000;
 var RESTORE_SKILLS_TOTAL = 25000;
 var RESTORE_PLAN_TOKENS = 5000;
 var RESTORE_SHARE = 0.2;
-var RESTORE_MIN_TOKENS = 1e4;
+var RESTORE_MIN_TOKENS = 3000;
 var RESTORE_MAX_TOKENS = 40000;
+var RESTORE_RECENT_SHARE = 0.1;
+var RESTORE_RECENT_TOKENS = 20000;
+var RECENT_CHARS = 1e5;
+var RECENT_STEP_CHARS = 8000;
+var QUICK_REPEAT_CALLS = 5;
 var RECITE_AFTER_TOOL_CALLS = 8;
 var STALE_CHECK_FILES = 50;
 var SHELL_RUNS_KEPT = 20;
@@ -345,14 +350,22 @@ ${parts.join(`
 
 `)}`);
   const work = [];
-  if (state.calls?.length) {
+  const keptRecent = /<recent-context>\s*\S/.test(visible);
+  const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(state.compactedTokens, budget));
+  if (steps.length > 0) {
+    work.push(`Your last steps, oldest first, with what they returned:
+
+${steps.map(renderStep).join(`
+
+`)}`);
+  } else if (state.calls?.length) {
     work.push(`Your last tool calls, oldest first:
 
 ${state.calls.map((call) => `- ${call.what}${call.outcome ? `: ${call.outcome}` : ""}`).join(`
 `)}`);
   }
   const test = state.lastTest;
-  if (test) {
+  if (test && !steps.some((step) => step.text && step.what.includes(test.command.slice(0, 60)))) {
     const ending = test.exit === undefined ? "" : `, which ended with exit ${test.exit}`;
     work.push(`Your latest test run was \`${test.command}\`${ending}. The end of its output:
 
@@ -366,7 +379,7 @@ ${work.join(`
 `)}`);
   const records = Object.values(state.files);
   const edited = records.filter((record) => record.editedAt && !isPlan(record)).sort((a, b) => (b.editedAt ?? 0) - (a.editedAt ?? 0));
-  if (edited.length > 0) {
+  if (edited.length > 0 && !state.lean) {
     const changes = await describeChanges(state, edited, relative, budget);
     if (changes && take("changes", changes.text))
       for (const file of changes.files)
@@ -374,7 +387,7 @@ ${work.join(`
   }
   const reading = [];
   for (const record of records.filter((record) => !record.editedAt && record.ranges?.length && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
-    if (reading.length >= RESTORE_READ_FILES)
+    if (state.lean || reading.length >= RESTORE_READ_FILES)
       break;
     const text = await readText(record.path);
     if (text === undefined)
@@ -412,14 +425,14 @@ ${reading.join(`
 
 `)}`);
   }
-  if (state.notes.length > 0)
+  if (state.notes.length > 0 && !state.lean)
     take("notes", `## Your latest progress notes
 
 ${state.notes.map((note) => `- ${note}`).join(`
 `)}`);
   const planRecord = records.filter((record) => record.editedAt && isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))[0];
   const planText = planRecord && await readText(planRecord.path);
-  if (planRecord && planText)
+  if (planRecord && planText && !state.lean)
     take("plan", `## Plan (${planRecord.path})
 
 ${keepStart(planText, RESTORE_PLAN_TOKENS)}`);
@@ -428,19 +441,18 @@ ${keepStart(planText, RESTORE_PLAN_TOKENS)}`);
     if (others.length >= RESTORE_OTHER_FILES)
       break;
     if (await diskState(record.path))
-      others.push(`- ${relative(record.path)}`);
+      others.push(record);
   }
   if (others.length > 0) {
     take("others", `## Other files you used earlier
 
 Not restored. Read them again when your task touches them.
 
-${others.join(`
-`)}`);
+${groupByDirectory(others, relative)}`);
   }
   const skillSections = [];
   let skillBudget = Math.min(RESTORE_SKILLS_TOTAL, budget);
-  for (const skill of Object.values(state.skills).sort((a, b) => b.at - a.at)) {
+  for (const skill of state.lean ? [] : Object.values(state.skills).sort((a, b) => b.at - a.at)) {
     const body = `### Skill: ${skill.name}
 
 ${keepStart(skill.text, RESTORE_SKILL_TOKENS)}`;
@@ -463,7 +475,7 @@ ${skillSections.join(`
     return;
   const text = [
     "<restored-context>",
-    "The conversation was compacted. Carry on from where you left off; don't start the task over. The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.",
+    "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more. The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.",
     "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
     "",
     sections.join(`
@@ -474,6 +486,40 @@ ${skillSections.join(`
   ].join(`
 `);
   return { text, tokens: estimateTokens(text), at: Date.now(), summaryKey, sections: sizes };
+}
+function recentBudget(compactedTokens, left) {
+  return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * (compactedTokens ?? 0), left / 2));
+}
+function latestSteps(recent, budget) {
+  const chosen = [];
+  let used = 0;
+  for (const step of [...recent].reverse()) {
+    if (step.tool === "read")
+      continue;
+    const tokens = estimateTokens(renderStep(step));
+    if (used + tokens > budget)
+      break;
+    used += tokens;
+    chosen.unshift(step);
+  }
+  return chosen;
+}
+function renderStep(step) {
+  const line = step.what === "You wrote" ? "- You wrote:" : `- ${step.what}${step.outcome ? `: ${step.outcome}` : ""}`;
+  return step.text ? `${line}
+
+${fenced(step.text)}` : line;
+}
+function groupByDirectory(records, relative) {
+  const folders = new Map;
+  for (const record of records) {
+    const file = relative(record.path);
+    const folder = path4.dirname(file);
+    const mark = record.editedAt ? record.readAt ? "read, changed" : "changed" : "read";
+    folders.set(folder, [...folders.get(folder) ?? [], `${path4.basename(file)} (${mark})`]);
+  }
+  return [...folders].map(([folder, names]) => `- ${folder === "." ? "" : `${folder}/: `}${names.join(", ")}`).join(`
+`);
 }
 async function describeChanges(state, edited, relative, limit) {
   const parts = [];
@@ -623,6 +669,29 @@ function tail(text) {
 `);
   return lines.length > TEST_TAIL_CHARS ? `\u2026${lines.slice(-TEST_TAIL_CHARS)}` : lines;
 }
+function keepHeadAndTail(text, chars) {
+  if (text.length <= chars)
+    return text;
+  const head = Math.floor(chars * 0.6);
+  const tail = chars - head;
+  return `${text.slice(0, head)}
+[\u2026 ${text.length - head - tail} characters left out \u2026]
+${text.slice(-tail)}`;
+}
+function addRecent(state, step) {
+  const steps = [...state.recent ?? [], step];
+  let size = steps.reduce((sum, item) => sum + item.what.length + (item.text?.length ?? 0), 0);
+  while (steps.length > 1 && size > RECENT_CHARS) {
+    const dropped = steps.shift();
+    size -= (dropped?.what.length ?? 0) + (dropped?.text?.length ?? 0);
+  }
+  state.recent = steps;
+}
+function recordText(state, text) {
+  const trimmed = text.trim();
+  if (trimmed)
+    addRecent(state, { what: "You wrote", text: keepHeadAndTail(trimmed, RECENT_STEP_CHARS) });
+}
 function describeCall(tool, input, output, content, directory) {
   const fields = input ?? {};
   const relative = (file) => path5.relative(directory, path5.resolve(directory, file)) || file;
@@ -650,6 +719,13 @@ function recordCall(state, call) {
   const outcome = call.error !== undefined ? `failed: ${oneLine(call.error, 200)}` : exit !== undefined ? `exit ${exit}` : undefined;
   const what = describeCall(call.tool, call.input, call.output, call.content, call.directory);
   state.calls = [...state.calls ?? [], { what, ...outcome ? { outcome } : {} }].slice(-CALLS_KEPT);
+  const returned = call.tool === "read" ? "" : call.error ?? contentText(call.content).trim();
+  addRecent(state, {
+    tool: call.tool,
+    what,
+    ...outcome ? { outcome } : {},
+    ...returned ? { text: keepHeadAndTail(returned, RECENT_STEP_CHARS) } : {}
+  });
   const command = call.input?.command;
   if (SHELL_TOOLS.has(call.tool) && typeof command === "string" && isTestCommand(command)) {
     const output = call.error ?? (contentText(call.content) || String(call.output?.output ?? ""));
@@ -724,7 +800,7 @@ var src_default = Plugin.define({
         const restoration = await buildRestoration(state, await contextWindow(model), key, visible);
         state.snapshot = restoration ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) } : { text: "", tokens: 0, at: Date.now(), summaryKey: key };
         store.save(sessionID);
-        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections });
+        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections, text: state.snapshot.text });
         return state.snapshot;
       })().finally(() => building.delete(sessionID));
       building.set(sessionID, job);
@@ -751,6 +827,7 @@ var src_default = Plugin.define({
       const state = await store.get(event.sessionID);
       const directory = await directoryOf(event.sessionID, state);
       state.toolStreak++;
+      state.callsSinceCompaction = (state.callsSinceCompaction ?? 0) + 1;
       if (SHELL_TOOLS.has(event.tool)) {
         const now = Date.now();
         recordShellRun(state, shellStarts.get(event.id) ?? now, now);
@@ -774,6 +851,7 @@ var src_default = Plugin.define({
       const state = await store.get(event.sessionID);
       const messages = event.messages;
       state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => message.content)));
+      state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS;
       store.save(event.sessionID);
       if (on("T2"))
         await restoreInto(event.sessionID, messages, event.model);
@@ -817,7 +895,12 @@ var src_default = Plugin.define({
       if (event.type === "session.deleted")
         return store.remove(sessionID);
       const state = await store.get(sessionID);
+      if (event.type === "session.compaction.ended") {
+        state.callsSinceCompaction = 0;
+        store.save(sessionID);
+      }
       if (event.type === "session.text.ended" && typeof data.text === "string" && data.text.trim()) {
+        recordText(state, data.text);
         if (state.toolStreak > 0) {
           const note = data.text.trim().replace(/\s+/g, " ");
           state.notes = [...state.notes, note.length > PROGRESS_NOTE_CHARS ? `${note.slice(0, PROGRESS_NOTE_CHARS)}\u2026` : note].slice(-PROGRESS_NOTES);

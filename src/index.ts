@@ -2,13 +2,13 @@ import { appendFile } from "node:fs/promises"
 import type { Message } from "@opencode/ai"
 import { Plugin } from "@opencode/plugin"
 import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"
-import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES } from "./limits"
+import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES, QUICK_REPEAT_CALLS } from "./limits"
 import { checkpointIndex, insertNearEnd, textOf, userMessage } from "./messages"
 import { recitation, staleFiles, staleNotice } from "./reminders"
 import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
 import { estimateTokens } from "./tokens"
-import { recordCall, recordRequest } from "./work"
+import { recordCall, recordRequest, recordText } from "./work"
 
 type Feature = "T2" | "T4" | "T6"
 type ModelRef = { readonly providerID: string; readonly id: string }
@@ -82,7 +82,7 @@ export default Plugin.define({
           ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) }
           : { text: "", tokens: 0, at: Date.now(), summaryKey: key }
         store.save(sessionID)
-        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections })
+        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections, text: state.snapshot.text })
         return state.snapshot
       })().finally(() => building.delete(sessionID))
       building.set(sessionID, job)
@@ -116,6 +116,7 @@ export default Plugin.define({
         const state = await store.get(event.sessionID)
         const directory = await directoryOf(event.sessionID, state)
         state.toolStreak++
+        state.callsSinceCompaction = (state.callsSinceCompaction ?? 0) + 1
         if (SHELL_TOOLS.has(event.tool)) {
           const now = Date.now()
           recordShellRun(state, shellStarts.get(event.id) ?? now, now)
@@ -150,6 +151,8 @@ export default Plugin.define({
         const state = await store.get(event.sessionID)
         const messages = event.messages as Message[]
         state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
+        // A compaction right after the previous one means the context refills fast, so the next restoration stays small.
+        state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS
         store.save(event.sessionID)
         if (on("T2")) await restoreInto(event.sessionID, messages, event.model)
       }),
@@ -193,7 +196,12 @@ export default Plugin.define({
       if (!sessionID) return
       if (event.type === "session.deleted") return store.remove(sessionID)
       const state = await store.get(sessionID)
+      if (event.type === "session.compaction.ended") {
+        state.callsSinceCompaction = 0
+        store.save(sessionID)
+      }
       if (event.type === "session.text.ended" && typeof data.text === "string" && data.text.trim()) {
+        recordText(state, data.text)
         if (state.toolStreak > 0) {
           const note = data.text.trim().replace(/\s+/g, " ")
           state.notes = [...state.notes, note.length > PROGRESS_NOTE_CHARS ? `${note.slice(0, PROGRESS_NOTE_CHARS)}…` : note].slice(

@@ -31,16 +31,28 @@ export const RESTORE_LINE_CHARS = 1_000
 /** Edited files restored whole, the most recently edited first. */
 export const RESTORE_FILES = 5
 /** Further files the session used, listed by path only. */
-export const RESTORE_OTHER_FILES = 30
+export const RESTORE_OTHER_FILES = 20
 /** A file larger than this comes back as a path reference instead of its content. */
 export const RESTORE_FILE_TOKENS = 5_000
 export const RESTORE_SKILL_TOKENS = 5_000
 export const RESTORE_SKILLS_TOTAL = 25_000
 export const RESTORE_PLAN_TOKENS = 5_000
-/** Restoration may use this share of the context that was compacted, and of the model's window. */
+/**
+ * Restoration may use this share of the context that was compacted, and of the model's window. The floor only keeps
+ * room for the request and the latest steps: a larger one took a quarter of a 40,000-token conversation, and the next
+ * compaction came sooner.
+ */
 export const RESTORE_SHARE = 0.2
-export const RESTORE_MIN_TOKENS = 10_000
+export const RESTORE_MIN_TOKENS = 3_000
 export const RESTORE_MAX_TOKENS = 40_000
+/** The agent's latest steps, word for word, may use up to this share of the context that was compacted. */
+export const RESTORE_RECENT_SHARE = 0.1
+export const RESTORE_RECENT_TOKENS = 20_000
+/** The agent's latest steps kept for that, in characters, and the most kept from one step's output. */
+export const RECENT_CHARS = 100_000
+export const RECENT_STEP_CHARS = 8_000
+/** A compaction this few tool calls after the one before it restores only the request, the latest steps, and paths. */
+export const QUICK_REPEAT_CALLS = 5
 
 /** Tool calls in a row, with no text to the user, before a recap is requested. */
 export const RECITE_AFTER_TOOL_CALLS = 8

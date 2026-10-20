@@ -29,6 +29,14 @@ export interface CallRecord {
   outcome?: string
 }
 
+/** One of the agent's latest steps, word for word: a tool call and what it returned, or what the agent wrote. */
+export interface RecentStep {
+  tool?: string
+  what: string
+  outcome?: string
+  text?: string
+}
+
 /** The agent's latest test command and how it ended. */
 export interface TestRun {
   command: string
@@ -60,7 +68,13 @@ export interface SessionState {
   requests?: string[]
   /** The agent's latest tool calls, oldest first. */
   calls?: CallRecord[]
+  /** The agent's latest steps with their output, oldest first, within a fixed size. */
+  recent?: RecentStep[]
   lastTest?: TestRun
+  /** Tool calls since the last compaction. */
+  callsSinceCompaction?: number
+  /** The last compaction came right after the one before it, so the next restoration stays small. */
+  lean?: boolean
   /** When the agent's recent shell commands ran. A file that changed during one was changed by the agent. */
   shellRuns?: { start: number; end: number }[]
   /** Estimated size of the conversation at the last compaction. */

@@ -1,5 +1,6 @@
 // Compares A and B run by run: the same task, model, and repeat, once without lodestar and once with it.
-// usage: bun eval/compare.ts [--tasks] [--model <part of a model name>] <results.jsonl>...
+// usage: bun eval/compare.ts [--tasks] [--model <part of a model name>] [--pair A,C] <results.jsonl>...
+// --pair picks the two configs to compare, A and B unless given. Below, "A" and "B" stand for those two.
 import type { Metrics } from "./lib/metrics"
 import type { RunResult } from "./lib/result"
 
@@ -9,7 +10,11 @@ const args = Bun.argv.slice(2)
 const showTasks = args.includes("--tasks")
 const modelAt = args.indexOf("--model")
 const onlyModel = modelAt >= 0 ? args[modelAt + 1] : undefined
-const files = args.filter((arg, index) => arg !== "--tasks" && arg !== "--model" && index !== modelAt + 1)
+const pairAt = args.indexOf("--pair")
+const [first = "A", second = "B"] = pairAt >= 0 ? (args[pairAt + 1] ?? "").split(",") : []
+const files = args.filter(
+  (arg, index) => !["--tasks", "--model", "--pair"].includes(arg) && (modelAt < 0 || index !== modelAt + 1) && (pairAt < 0 || index !== pairAt + 1),
+)
 const results: RunResult[] = []
 for (const file of files) {
   for (const line of (await Bun.file(file).text()).split("\n")) {
@@ -25,8 +30,8 @@ for (const result of results) {
   if (!result.ok) continue
   const name = [result.model, result.task, result.repeat].join("\u0000")
   const pair = byName.get(name) ?? {}
-  if (result.config === "A") pair.a = result
-  if (result.config === "B") pair.b = result
+  if (result.config === first) pair.a = result
+  if (result.config === second) pair.b = result
   byName.set(name, pair)
 }
 const pairs = [...byName.values()].filter((pair): pair is Pair => Boolean(pair.a && pair.b))
@@ -92,6 +97,7 @@ function summarize(title: string, matched: Pair[]) {
   console.log()
 }
 
+if (first !== "A" || second !== "B") console.log(`Comparing ${second} against ${first}: "A" below is ${first}, "B" is ${second}.\n`)
 console.log(onlyModel ? `## Models matching ${onlyModel}\n` : "## All models\n")
 summarize("All pairs", pairs)
 summarize("Pairs where A or B compacted", pairs.filter(compacted))

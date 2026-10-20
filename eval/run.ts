@@ -42,6 +42,8 @@ const { values } = parseArgs({
     // Minutes the agent gets, as in the benchmark's protocol. The partial work is graded when time runs out.
     budget: { type: "string", default: "50" },
     concurrency: { type: "string", default: "3" },
+    // Another lodestar checkout, run as config C, to compare two versions of the plugin on the same tasks.
+    "c-plugin": { type: "string" },
     // Removes each task's image once all of its runs are done.
     "prune-images": { type: "boolean", default: false },
     out: { type: "string", default: path.join(REPO, "eval/.runs", new Date().toISOString().replace(/[:.]/g, "-")) },
@@ -132,7 +134,10 @@ class Sandbox {
   private env: string[] = []
   workdir = "/app"
 
-  constructor(private readonly image: string) {}
+  constructor(
+    private readonly image: string,
+    private readonly pluginDir = REPO,
+  ) {}
 
   async start() {
     const imageEnv = JSON.parse((await must(["image", "inspect", "-f", "{{json .Config.Env}}", this.image])).stdout) as string[]
@@ -140,7 +145,7 @@ class Sandbox {
     const started = await launch(this.name, [
       "-d", "--network", NETWORK, "--memory", "6g", "--cpus", "2",
       "-v", `${OPENCODE}:${MOUNTS}/opencode-glibc:ro`, "-v", `${await muslBuild()}:${MOUNTS}/opencode-musl:ro`,
-      "-v", `${RIPGREP}:${MOUNTS}/rg:ro`, "-v", `${REPO}:${PLUGIN}:ro`,
+      "-v", `${RIPGREP}:${MOUNTS}/rg:ro`, "-v", `${this.pluginDir}:${PLUGIN}:ro`,
       "--entrypoint", "tail", this.image, "-f", "/dev/null",
     ])
     if (started.code !== 0) throw new Error(`docker run failed: ${started.stderr.trim().slice(-500)}`)
@@ -285,7 +290,7 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
   await mkdir(root, { recursive: true })
   const steps: RunResult["steps"] = []
   const result: RunResult = { model, config, task: task.id, repeat, ok: false, steps }
-  const sandbox = new Sandbox(task.image)
+  const sandbox = new Sandbox(task.image, config === "C" ? path.resolve(values["c-plugin"] ?? "") : REPO)
   let sessionID: string | undefined
   try {
     let started = Date.now()
@@ -298,7 +303,7 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
     if (window <= (compactAt ?? Number(values.threshold))) throw new Error(`the threshold is above ${model}'s limit of ${window} tokens`)
     result.window = window
     // B runs lodestar. B-T4 and the like run it with one feature switched off, to measure what that feature adds.
-    const plugin = config.startsWith("B")
+    const plugin = config.startsWith("B") || config === "C"
     const disabled = config.match(/^B-(T\d)$/)?.[1]
     const serverConfig = {
       ...(compactAt ? {} : { compaction: { buffer: window - Number(values.threshold) } }),
@@ -415,7 +420,10 @@ if (!(await Bun.file(RIPGREP).exists())) throw new Error(`ripgrep not found at $
 const tasks = await Promise.all(taskIDs.map((id) => loadTask(values["tasks-dir"], id)))
 const models = values.models.split(",")
 const configs = values.configs.split(",")
-for (const config of configs) if (!/^(A|B|B-T[246])$/.test(config)) throw new Error(`unknown config ${config}`)
+for (const config of configs) if (!/^(A|B|B-T[246]|C)$/.test(config)) throw new Error(`unknown config ${config}`)
+if (configs.includes("C") && !(await Bun.file(path.join(path.resolve(values["c-plugin"] ?? ""), "package.json")).exists())) {
+  throw new Error("config C needs --c-plugin, a lodestar checkout with a built dist/")
+}
 
 await mkdir(out, { recursive: true })
 await ensureProxy()

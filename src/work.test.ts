@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { addRange, readRange } from "./files"
 import type { SessionState } from "./state"
-import { describeCall, isTestCommand, recordCall, recordRequest } from "./work"
+import { describeCall, isTestCommand, recordCall, recordRequest, recordText } from "./work"
 
 const state = (): SessionState => ({ directory: "/repo", files: {}, notes: [], skills: {}, toolStreak: 0, recited: false })
 
@@ -59,6 +59,30 @@ test("tells test commands from others", () => {
   for (const command of ["git status", "ls tests/", "cat test_parser.py", "go build ./...", "grep -rn latest ."]) {
     expect(isTestCommand(command)).toBe(false)
   }
+})
+
+test("keeps the latest steps with their output, but not what a read returned", () => {
+  const session = state()
+  recordCall(session, { tool: "read", input: { path: "a.ts" }, content: "Read file a.ts, lines 1-2\n1: x", directory: "/repo" })
+  recordCall(session, { tool: "shell", input: { command: "ls" }, output: { exit: 0 }, content: "a.ts\nb.ts", directory: "/repo" })
+  recordText(session, "  Both files are there.  ")
+  recordCall(session, { tool: "shell", input: { command: "cat big" }, output: { exit: 0 }, content: "x".repeat(20_000), directory: "/repo" })
+  expect(session.recent?.slice(0, 3)).toEqual([
+    { tool: "read", what: "read a.ts, lines 1-2" },
+    { tool: "shell", what: "shell `ls`", outcome: "exit 0", text: "a.ts\nb.ts" },
+    { what: "You wrote", text: "Both files are there." },
+  ])
+  const big = session.recent?.[3]?.text ?? ""
+  expect(big.length).toBeLessThan(8_100)
+  expect(big).toContain("characters left out")
+})
+
+test("drops the oldest steps past the size limit", () => {
+  const session = state()
+  for (let index = 0; index < 30; index++) recordText(session, `${index} ${"y".repeat(7_000)}`)
+  const kept = session.recent ?? []
+  expect(kept.length).toBeLessThan(15)
+  expect(kept.at(-1)?.text?.startsWith("29 ")).toBe(true)
 })
 
 test("keeps the first request and the latest three after it", () => {

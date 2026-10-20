@@ -15,6 +15,8 @@ import {
   RESTORE_PLAN_TOKENS,
   RESTORE_READ_FILES,
   RESTORE_READ_TOKENS,
+  RESTORE_RECENT_SHARE,
+  RESTORE_RECENT_TOKENS,
   RESTORE_REQUEST_TOKENS,
   RESTORE_SHARE,
   RESTORE_SKILL_TOKENS,
@@ -22,7 +24,7 @@ import {
   RESTORE_STATUS_LINES,
   RESTORE_TASK_TOKENS,
 } from "./limits"
-import type { FileRecord, SessionState, Snapshot } from "./state"
+import type { FileRecord, RecentStep, SessionState, Snapshot } from "./state"
 import { estimateTokens, keepEnds, keepStart } from "./tokens"
 
 /** Where OpenCode's plan mode writes plans. */
@@ -106,12 +108,18 @@ export async function buildRestoration(
   }
   if (parts.length > 0) take("task", `## Your task\n\n${parts.join("\n\n")}`)
 
+  // OpenCode keeps no conversation word for word after compacting a session with a single request, so the latest steps
+  // come back with what they returned. When OpenCode kept recent conversation itself, it isn't repeated.
   const work: string[] = []
-  if (state.calls?.length) {
+  const keptRecent = /<recent-context>\s*\S/.test(visible)
+  const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(state.compactedTokens, budget))
+  if (steps.length > 0) {
+    work.push(`Your last steps, oldest first, with what they returned:\n\n${steps.map(renderStep).join("\n\n")}`)
+  } else if (state.calls?.length) {
     work.push(`Your last tool calls, oldest first:\n\n${state.calls.map((call) => `- ${call.what}${call.outcome ? `: ${call.outcome}` : ""}`).join("\n")}`)
   }
   const test = state.lastTest
-  if (test) {
+  if (test && !steps.some((step) => step.text && step.what.includes(test.command.slice(0, 60)))) {
     const ending = test.exit === undefined ? "" : `, which ended with exit ${test.exit}`
     work.push(`Your latest test run was \`${test.command}\`${ending}. The end of its output:\n\n${fenced(test.tail || "(no output)")}`)
   }
@@ -119,7 +127,7 @@ export async function buildRestoration(
 
   const records = Object.values(state.files)
   const edited = records.filter((record) => record.editedAt && !isPlan(record)).sort((a, b) => (b.editedAt ?? 0) - (a.editedAt ?? 0))
-  if (edited.length > 0) {
+  if (edited.length > 0 && !state.lean) {
     const changes = await describeChanges(state, edited, relative, budget)
     if (changes && take("changes", changes.text)) for (const file of changes.files) shown.add(file)
   }
@@ -128,7 +136,7 @@ export async function buildRestoration(
   // share one change time, so ordering by it picked read-only files at random.
   const reading: string[] = []
   for (const record of records.filter((record) => !record.editedAt && record.ranges?.length && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
-    if (reading.length >= RESTORE_READ_FILES) break
+    if (state.lean || reading.length >= RESTORE_READ_FILES) break
     const text = await readText(record.path)
     if (text === undefined) continue
     const lines = linesOf(text)
@@ -152,27 +160,27 @@ export async function buildRestoration(
     take("reading", `## Code you were reading\n\nThe parts of these files you read last, as they are on disk now, with line numbers.\n\n${reading.join("\n\n")}`)
   }
 
-  if (state.notes.length > 0) take("notes", `## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
+  if (state.notes.length > 0 && !state.lean) take("notes", `## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
 
   const planRecord = records.filter((record) => record.editedAt && isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))[0]
   const planText = planRecord && (await readText(planRecord.path))
-  if (planRecord && planText) take("plan", `## Plan (${planRecord.path})\n\n${keepStart(planText, RESTORE_PLAN_TOKENS)}`)
+  if (planRecord && planText && !state.lean) take("plan", `## Plan (${planRecord.path})\n\n${keepStart(planText, RESTORE_PLAN_TOKENS)}`)
 
   // Without this list, an agent that saw some files restored stopped looking at the others, and missed uses of a
   // function it was asked to rename everywhere.
-  const others: string[] = []
+  const others: FileRecord[] = []
   for (const record of records.filter((record) => !shown.has(record.path) && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
     if (others.length >= RESTORE_OTHER_FILES) break
-    if (await diskState(record.path)) others.push(`- ${relative(record.path)}`)
+    if (await diskState(record.path)) others.push(record)
   }
   if (others.length > 0) {
-    take("others", `## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n${others.join("\n")}`)
+    take("others", `## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n${groupByDirectory(others, relative)}`)
   }
 
   // Newest skills first. Each keeps its start, since instructions near the top matter most.
   const skillSections: string[] = []
   let skillBudget = Math.min(RESTORE_SKILLS_TOTAL, budget)
-  for (const skill of Object.values(state.skills).sort((a, b) => b.at - a.at)) {
+  for (const skill of state.lean ? [] : Object.values(state.skills).sort((a, b) => b.at - a.at)) {
     const body = `### Skill: ${skill.name}\n\n${keepStart(skill.text, RESTORE_SKILL_TOKENS)}`
     const tokens = estimateTokens(body)
     if (tokens > skillBudget) break
@@ -189,7 +197,7 @@ export async function buildRestoration(
   if (sections.length === 0) return undefined
   const text = [
     "<restored-context>",
-    "The conversation was compacted. Carry on from where you left off; don't start the task over. The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.",
+    "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more. The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.",
     "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
     "",
     sections.join("\n\n"),
@@ -199,6 +207,43 @@ export async function buildRestoration(
     "</restored-context>",
   ].join("\n")
   return { text, tokens: estimateTokens(text), at: Date.now(), summaryKey, sections: sizes }
+}
+
+/** How much of the restoration the latest steps may take: a share of the conversation that was compacted, within the rest. */
+function recentBudget(compactedTokens: number | undefined, left: number) {
+  return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * (compactedTokens ?? 0), left / 2))
+}
+
+/** The newest steps that fit the budget, oldest first. Reads are left out: the files come back from disk. */
+function latestSteps(recent: RecentStep[], budget: number) {
+  const chosen: RecentStep[] = []
+  let used = 0
+  for (const step of [...recent].reverse()) {
+    if (step.tool === "read") continue
+    const tokens = estimateTokens(renderStep(step))
+    if (used + tokens > budget) break
+    used += tokens
+    chosen.unshift(step)
+  }
+  return chosen
+}
+
+/** One step as Markdown: what it was and what it returned. Never a transcript, which models imitated in their tool calls. */
+function renderStep(step: RecentStep) {
+  const line = step.what === "You wrote" ? "- You wrote:" : `- ${step.what}${step.outcome ? `: ${step.outcome}` : ""}`
+  return step.text ? `${line}\n\n${fenced(step.text)}` : line
+}
+
+/** Paths grouped by folder, each marked by what the agent did with it. */
+function groupByDirectory(records: FileRecord[], relative: (file: string) => string) {
+  const folders = new Map<string, string[]>()
+  for (const record of records) {
+    const file = relative(record.path)
+    const folder = path.dirname(file)
+    const mark = record.editedAt ? (record.readAt ? "read, changed" : "changed") : "read"
+    folders.set(folder, [...(folders.get(folder) ?? []), `${path.basename(file)} (${mark})`])
+  }
+  return [...folders].map(([folder, names]) => `- ${folder === "." ? "" : `${folder}/: `}${names.join(", ")}`).join("\n")
 }
 
 /**
