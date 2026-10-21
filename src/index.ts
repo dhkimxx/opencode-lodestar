@@ -1,6 +1,7 @@
 import { appendFile } from "node:fs/promises"
 import type { Message } from "@opencode/ai"
 import { Plugin } from "@opencode/plugin"
+import { joinCopies } from "./copies"
 import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"
 import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES, QUICK_REPEAT_CALLS } from "./limits"
 import { checkpointIndex, insertNearEnd, textOf, userMessage } from "./messages"
@@ -27,6 +28,8 @@ export default Plugin.define({
       if (tracePath) void appendFile(tracePath, `${JSON.stringify({ at: Date.now(), ...entry })}\n`).catch(() => {})
     }
 
+    // The same plugin can be configured twice. Every hook below returns early unless this copy leads.
+    const copy = joinCopies()
     const store = new Store(ctx.storage)
     const registrations: { dispose: () => Promise<void> }[] = []
 
@@ -105,6 +108,7 @@ export default Plugin.define({
     const shellStarts = new Map<string, number>()
     registrations.push(
       await ctx.tool.hook("execute.before", async (event) => {
+        if (!copy.leads()) return
         if (SHELL_TOOLS.has(event.tool)) shellStarts.set(event.id, Date.now())
       }),
     )
@@ -113,6 +117,7 @@ export default Plugin.define({
     // file looked.
     registrations.push(
       await ctx.tool.hook("execute.after", async (event) => {
+        if (!copy.leads()) return
         const state = await store.get(event.sessionID)
         const directory = await directoryOf(event.sessionID, state)
         state.toolStreak++
@@ -136,6 +141,7 @@ export default Plugin.define({
     // The user's requests, word for word. After a compaction the summary has them only in its own words.
     registrations.push(
       await ctx.session.hook("prompt", async (event) => {
+        if (!copy.leads()) return
         const state = await store.get(event.sessionID)
         recordRequest(state, event.prompt.text)
         store.save(event.sessionID)
@@ -148,6 +154,7 @@ export default Plugin.define({
     // on as uncached input: 38k tokens per compaction in evaluation, against 5k without lodestar.
     registrations.push(
       await ctx.session.hook("compaction", async (event) => {
+        if (!copy.leads()) return
         const state = await store.get(event.sessionID)
         const messages = event.messages as Message[]
         state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
@@ -161,6 +168,7 @@ export default Plugin.define({
     // T2, T6, T4: additions to each request. None of them is saved in the session.
     registrations.push(
       await ctx.session.hook("context", async (event) => {
+        if (!copy.leads()) return
         const state = await store.get(event.sessionID)
         const messages = event.messages as Message[]
         let changed = false
@@ -191,6 +199,7 @@ export default Plugin.define({
 
     const abort = new AbortController()
     async function handle(event: { type: string; data?: Record<string, unknown> }) {
+      if (!copy.leads()) return
       const data = event.data ?? {}
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
       if (!sessionID) return
@@ -229,6 +238,7 @@ export default Plugin.define({
     })()
 
     return async () => {
+      copy.leave()
       abort.abort()
       for (const registration of registrations) await registration.dispose()
     }

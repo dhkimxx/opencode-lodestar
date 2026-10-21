@@ -2,6 +2,54 @@
 // src/index.ts
 import { appendFile } from "fs/promises";
 import { Plugin } from "@opencode/plugin";
+// package.json
+var version = "0.3.0";
+
+// src/copies.ts
+var REGISTRY = Symbol.for("opencode-lodestar.copies");
+function joinCopies(scope = globalThis, own = version) {
+  const holder = scope;
+  const registry = holder[REGISTRY] ??= { copies: new Set, next: 0 };
+  const self = { version: own, order: registry.next++ };
+  registry.copies.add(self);
+  return {
+    leads: () => leader(registry.copies) === self,
+    leave: () => void registry.copies.delete(self)
+  };
+}
+function leader(copies) {
+  let best;
+  for (const copy of copies) {
+    if (!best)
+      best = copy;
+    else {
+      const newer = compareVersions(copy.version, best.version);
+      if (newer > 0 || newer === 0 && copy.order > best.order)
+        best = copy;
+    }
+  }
+  return best;
+}
+function compareVersions(a, b) {
+  const parse = (value) => {
+    const [core = "", pre] = value.split("-", 2);
+    return { parts: core.split(".").map((part) => Number.parseInt(part, 10) || 0), pre };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  for (let index = 0;index < 3; index++) {
+    const difference = (left.parts[index] ?? 0) - (right.parts[index] ?? 0);
+    if (difference !== 0)
+      return Math.sign(difference);
+  }
+  if (left.pre === right.pre)
+    return 0;
+  if (left.pre === undefined)
+    return 1;
+  if (right.pre === undefined)
+    return -1;
+  return left.pre.localeCompare(right.pre, "en", { numeric: true });
+}
 
 // src/files.ts
 import { readFile, stat } from "fs/promises";
@@ -756,6 +804,7 @@ var src_default = Plugin.define({
         appendFile(tracePath, `${JSON.stringify({ at: Date.now(), ...entry })}
 `).catch(() => {});
     };
+    const copy = joinCopies();
     const store = new Store(ctx.storage);
     const registrations = [];
     const windows = new Map;
@@ -820,10 +869,14 @@ var src_default = Plugin.define({
     }
     const shellStarts = new Map;
     registrations.push(await ctx.tool.hook("execute.before", async (event) => {
+      if (!copy.leads())
+        return;
       if (SHELL_TOOLS.has(event.tool))
         shellStarts.set(event.id, Date.now());
     }));
     registrations.push(await ctx.tool.hook("execute.after", async (event) => {
+      if (!copy.leads())
+        return;
       const state = await store.get(event.sessionID);
       const directory = await directoryOf(event.sessionID, state);
       state.toolStreak++;
@@ -843,11 +896,15 @@ var src_default = Plugin.define({
       store.save(event.sessionID);
     }));
     registrations.push(await ctx.session.hook("prompt", async (event) => {
+      if (!copy.leads())
+        return;
       const state = await store.get(event.sessionID);
       recordRequest(state, event.prompt.text);
       store.save(event.sessionID);
     }));
     registrations.push(await ctx.session.hook("compaction", async (event) => {
+      if (!copy.leads())
+        return;
       const state = await store.get(event.sessionID);
       const messages = event.messages;
       state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => message.content)));
@@ -857,6 +914,8 @@ var src_default = Plugin.define({
         await restoreInto(event.sessionID, messages, event.model);
     }));
     registrations.push(await ctx.session.hook("context", async (event) => {
+      if (!copy.leads())
+        return;
       const state = await store.get(event.sessionID);
       const messages = event.messages;
       let changed = false;
@@ -888,6 +947,8 @@ var src_default = Plugin.define({
     }));
     const abort = new AbortController;
     async function handle(event) {
+      if (!copy.leads())
+        return;
       const data = event.data ?? {};
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined;
       if (!sessionID)
@@ -926,6 +987,7 @@ var src_default = Plugin.define({
       }
     })();
     return async () => {
+      copy.leave();
       abort.abort();
       for (const registration of registrations)
         await registration.dispose();
