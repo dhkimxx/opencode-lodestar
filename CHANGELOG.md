@@ -3,6 +3,12 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [0.3.1] - 2026-10-21
+
+### Fixed
+
+- When lodestar is configured twice, for example once from `main` and once pinned to a tag, only the newest copy works. Before, both copies put their restoration into every request. This takes effect once every copy is 0.3.1 or later.
+
 ## [0.3.0] - 2026-10-21
 
 ### Added
@@ -45,6 +51,7 @@ This project follows [Semantic Versioning](https://semver.org).
 - After eight tool calls in a row with no message to the user, the agent is asked for a one-line recap.
 - An evaluation harness that runs SWE-bench Pro tasks with and without lodestar, inside each task's own container.
 
+[0.3.1]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.1
 [0.3.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.1.0
