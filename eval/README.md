@@ -9,7 +9,7 @@ Each run follows the benchmark's own protocol:
 - **The agent gets 50 minutes.** When time runs out, its partial work is graded.
 - **Grading happens in a fresh container.** The agent's diff is applied there and the task's own verifier runs. Grading has normal network access, since some Go tasks fetch modules during tests.
 
-Results for the current release are in [results/v0.2.0.md](results/v0.2.0.md).
+Results for the current release are in [results/v0.3.0.md](results/v0.3.0.md).
 
 ## Setup
 
@@ -42,7 +42,8 @@ bun eval/run.ts --tasks eval/tasks-hard.json \
 | --- | --- | --- |
 | `--tasks` | | Comma-separated task IDs, or a JSON file with an array of them. |
 | `--models` | `opencode-go/glm-5.3-flash#high` | Comma-separated models, with the reasoning variant after `#`. |
-| `--configs` | `A,B` | `A` is OpenCode alone, `B` is OpenCode with lodestar. `B-T2`, `B-T4`, and `B-T6` switch off one feature, to measure what it adds. |
+| `--configs` | `A,B` | `A` is OpenCode alone, `B` is OpenCode with lodestar. `B-T2`, `B-T4`, and `B-T6` switch off one feature, to measure what it adds. `C` runs the lodestar checkout given by `--c-plugin`, to compare two versions. |
+| `--c-plugin` | | Another lodestar checkout, with a built `dist/`, for config `C`. |
 | `--compact-at` | | The harness compacts the session whenever a request reaches this many tokens, and OpenCode keeps its own threshold. Use this for new runs. |
 | `--threshold` | `50000` | Without `--compact-at`, OpenCode's own auto compaction starts at this many tokens. |
 | `--budget` | `50` | Minutes the agent gets. |
@@ -57,7 +58,7 @@ Compaction has to be forced early, because sessions on these tasks rarely grow a
   - OpenCode then has room to send the compaction request as it is.
 - **`--threshold` lowers OpenCode's own threshold.** OpenCode also caps its compaction request at that threshold, and it estimates the request's size at four characters per token. When the estimate doesn't fit, it rebuilds the history as plain text, which loses the prompt cache with or without lodestar.
   - At 40,000 tokens, this happened to 46% of DeepSeek V4.1 Flash's compactions.
-  - The v0.2.0 results used `--threshold 40000`.
+  - The v0.3.0 results used `--compact-at 40000` instead, and no compaction request was rebuilt.
 
 Each run reads its model's limits inside the container, with the run's own login, because they depend on it: through a ChatGPT login, OpenAI models accept less than through the API.
 
@@ -71,7 +72,7 @@ Each run directory keeps `turn.jsonl` (the agent's events), `export.json` (the s
 
 - `compare.ts` pairs A and B runs of the same task and model. It reports the mean difference in each measure with a 95% bootstrap interval.
   - It reports all pairs, then the pairs where A or B compacted, then the pairs where both did, since lodestar only restores after a compaction.
-  - `--model` keeps only the models whose name contains the given text, and `--tasks` lists every pair.
+  - `--model` keeps only the models whose name contains the given text, `--pair C,B` compares two other configurations, and `--tasks` lists every pair.
   - Uncached prompt tokens include cache writes, because providers with explicit caching report new prompt tokens that way.
 - `regrade.ts` grades finished runs again from their saved patches, for example after a fix to grading. The agents don't run again.
 - `select.ts` makes the task lists. Both take tasks from every repository except `tutao/tutanota`, which has only four tasks, and both leave out the HARD-51 subset, which most model families fail, unless noted.

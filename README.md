@@ -8,7 +8,7 @@ When a long session fills the context window, OpenCode replaces the conversation
 
 - **Puts the work back.** Right after a compaction, the agent gets:
   - your request, word for word;
-  - where it left off: its last tool calls and its latest test run;
+  - where it left off: its latest steps word for word, with what they returned;
   - the files it changed, as they are now;
   - the parts of other files it was reading;
   - its plan, its latest progress notes, and the skills it had loaded.
@@ -32,7 +32,7 @@ This installs the plugin and adds it to the `plugins` list in your `opencode.jso
 To install a specific release, add its tag:
 
 ```sh
-opencode plugin add github:dhkimxx/opencode-lodestar#v0.2.0
+opencode plugin add github:dhkimxx/opencode-lodestar#v0.3.0
 ```
 
 Update or remove the plugin with the same name you installed it with:
@@ -61,12 +61,14 @@ There is nothing to do. lodestar works whenever OpenCode compacts a session, whe
 
 ## How it works
 
-- **Tracking.** lodestar follows each session: the requests you send, the files the agent reads and changes, its last few tool calls, its latest test run, the skills it loads, and its progress notes. This lives in OpenCode's plugin storage, one record per session, and is deleted with the session.
+- **Tracking.** lodestar follows each session: the requests you send, the files the agent reads and changes, its latest steps and what they returned, its latest test run, the skills it loads, and its progress notes. This lives in OpenCode's plugin storage, one record per session, and is deleted with the session.
 - **Restoring.** What lodestar restores goes into the request right after the summary.
   - Files the agent changed come back whole, the most recently changed first. Files over about 5,000 tokens come back as their `git diff` instead, when the project uses git. `git status` comes along too.
   - Files the agent only read come back as the lines it read last.
+  - The agent's latest steps come back word for word: what its commands and searches returned, and what it wrote. They take up to a tenth of the conversation that was compacted.
+  - When a compaction comes right after the previous one, only your request, the latest steps, and the list of files come back.
   - Everything is read from disk once per compaction and stays the same until the next one. It also goes into OpenCode's compaction request, so the provider's prompt cache keeps working.
-  - The whole restoration may use up to 20% of the size the conversation had when it was compacted, with a floor of 10,000 tokens and a ceiling of 40,000. It never takes more than 20% of the model's context window.
+  - The whole restoration may use up to 20% of the size the conversation had when it was compacted, with a floor of 3,000 tokens and a ceiling of 40,000. It never takes more than 20% of the model's context window.
 - **Reminders.** The recap request and the changed-file notice are added to a single request and never saved in the session.
 
 ## With other plugins
@@ -76,17 +78,18 @@ There is nothing to do. lodestar works whenever OpenCode compacts a session, whe
 
 ## Results
 
-Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os) with DeepSeek V4.1 Flash at reasoning effort `high`. The tasks were 40 hard issues from 10 open-source repositories. Each was worked once by OpenCode alone and once by OpenCode with lodestar, and graded by its hidden tests. Compaction started at 40,000 tokens, so most runs compacted, many of them several times.
+Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os) with DeepSeek V4.1 Flash at reasoning effort `high`. The tasks were hard issues from 10 open-source repositories. Each was worked once by OpenCode alone and once by OpenCode with lodestar, and graded by its hidden tests. Sessions were compacted whenever they reached 40,000 tokens, so most runs compacted, many of them several times.
 
-| Per run, over 40 pairs | OpenCode alone | With lodestar |
+| Per run, over 28 pairs | OpenCode alone | With lodestar |
 | --- | --- | --- |
-| Tasks resolved | 34 | 37 |
-| Cost | $0.111 | $0.081 (−27%) |
-| Tool calls | 177 | 108 (−39%) |
-| Minutes | 15.6 | 10.7 (−32%) |
-| Files read again after compaction | 55.7 | 23.6 (−58%) |
+| Tasks resolved | 25 | 27 |
+| Cost | $0.097 | $0.059 (−39%) |
+| Uncached prompt tokens | 314k | 174k (−45%) |
+| Tool calls | 136 | 80 (−41%) |
+| Minutes | 15.1 | 9.8 (−36%) |
+| Files read again after compaction | 32.9 | 9.5 (−71%) |
 
-The differences in cost, tool calls, time, and files read again are larger than run-to-run noise. The resolve rate isn't settled yet. lodestar resolved four tasks that OpenCode alone missed and missed one that OpenCode alone resolved, which 40 pairs can't tell apart from chance. Details and limitations are in [eval/results/v0.2.0.md](eval/results/v0.2.0.md).
+The differences in cost, uncached tokens, tool calls, time, and files read again are larger than run-to-run noise. The resolve rate isn't settled yet. lodestar resolved three tasks that OpenCode alone missed and missed one that OpenCode alone resolved, which 28 pairs can't tell apart from chance. Details and limitations are in [eval/results/v0.3.0.md](eval/results/v0.3.0.md).
 
 ## Development
 
