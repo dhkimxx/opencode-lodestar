@@ -23,6 +23,14 @@ OpenCode 2. Tested with OpenCode 2.0.27. OpenCode 1 is not supported.
 
 ## Install
 
+To install it along with opencode-ask and opencode-delete, use [opencode-kit](https://github.com/dhkimxx/opencode-kit). It also removes copies left over from earlier installs:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dhkimxx/opencode-kit/main/install.sh | bash
+```
+
+To install only this plugin:
+
 ```sh
 opencode plugin add github:dhkimxx/opencode-lodestar
 ```
@@ -32,7 +40,7 @@ This installs the plugin and adds it to the `plugins` list in your `opencode.jso
 To install a specific release, add its tag:
 
 ```sh
-opencode plugin add github:dhkimxx/opencode-lodestar#v0.3.0
+opencode plugin add github:dhkimxx/opencode-lodestar#v0.3.1
 ```
 
 Update or remove the plugin with the same name you installed it with:
@@ -41,6 +49,8 @@ Update or remove the plugin with the same name you installed it with:
 opencode plugin update github:dhkimxx/opencode-lodestar
 opencode plugin remove github:dhkimxx/opencode-lodestar
 ```
+
+To get a newer version, use `opencode plugin update`. Removing the plugin and adding it again reuses the copy OpenCode downloaded before.
 
 <details>
 <summary>Manual install</summary>
