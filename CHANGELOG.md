@@ -3,6 +3,20 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [0.3.0] - 2026-10-21
+
+### Added
+
+- After a compaction, the agent also gets its latest steps word for word: what its recent commands and searches returned, and what it last wrote. They take up to a tenth of the conversation that was compacted.
+- The evaluation harness can run two versions of lodestar side by side (`--c-plugin`), and `compare.ts --pair` compares any two configurations.
+
+### Changed
+
+- The restoration is sized to the conversation it replaces, up to a fifth of it, so it no longer crowds a small context window.
+- When a compaction comes right after the previous one, only your request, the latest steps, and the list of files come back.
+- The list of other files is grouped by folder and marks each file as read or changed.
+- The agent is told to say so when the work is already done, instead of inventing more.
+
 ## [0.2.0] - 2026-10-20
 
 ### Added
@@ -31,5 +45,6 @@ This project follows [Semantic Versioning](https://semver.org).
 - After eight tool calls in a row with no message to the user, the agent is asked for a one-line recap.
 - An evaluation harness that runs SWE-bench Pro tasks with and without lodestar, inside each task's own container.
 
+[0.3.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.1.0
