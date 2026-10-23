@@ -41,17 +41,53 @@ export function codexAuth(login: { access: string; accountID: string }) {
   })
 }
 
-export function codexAgent(): Agent {
+/** The two sentences that tell the model to batch work inside `exec`, as the catalog words them, and what they say without it. */
+const EXEC_BATCHING: [string, string][] = [
+  [
+    "Batch independent searches and reads in one functions.exec using await Promise.allSettled([...]); inspect every result.",
+    "Batch independent searches and reads by making several tool calls in the same turn; inspect every result.",
+  ],
+  [
+    "When calling `functions.exec`, parallelize independent tool calls by awaiting Promises.",
+    "Parallelize independent tool calls by making them in the same turn.",
+  ],
+]
+
+/**
+ * The bundled catalog with luna's tools offered directly, as for models without code mode: the model calls the shell
+ * and apply_patch itself. Nothing else changes, except the two sentences that name `exec`, which would point at a tool
+ * the model no longer has.
+ */
+export function directCatalog(catalog: string, model: string): string {
+  const data = JSON.parse(catalog) as { models: { slug: string; tool_mode?: string; model_messages?: { instructions_template?: string } }[] }
+  const entry = data.models.find((candidate) => candidate.slug === model)
+  if (!entry?.model_messages?.instructions_template) throw new Error(`no instructions for ${model} in the catalog`)
+  entry.tool_mode = "direct"
+  let text = entry.model_messages.instructions_template
+  for (const [from, to] of EXEC_BATCHING) {
+    if (!text.includes(from)) throw new Error(`the catalog no longer has this sentence: ${from}`)
+    text = text.replace(from, to)
+  }
+  entry.model_messages.instructions_template = text
+  return JSON.stringify(data)
+}
+
+/** `direct` is harness E: Codex with its tools offered one by one instead of through code mode. */
+export function codexAgent(direct = false): Agent {
   const env = ["CODEX_HOME=" + HOME, "CODEX_CA_CERTIFICATE=/opt/bench/ca.pem", "CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://127.0.0.1:9/"]
   return {
-    id: "D",
-    label: "Codex",
+    id: direct ? "E" : "D",
+    label: direct ? "Codex without code mode" : "Codex",
     async setup(ctx) {
       await ctx.box.write(`${HOME}/auth.json`, codexAuth(ctx.login))
       await ctx.box.write(`${HOME}/config.toml`, codexConfig(ctx.model, ctx.effort, ctx.threshold))
       // The catalog that ships with this release: no network, and the same on every run.
       const made = await ctx.box.exec(["sh", "-c", `codex debug models --bundled > ${HOME}/models.json`], { env })
       if (made.code !== 0) throw new Error(`codex debug models failed: ${made.stderr.trim().slice(-300)}`)
+      if (direct) {
+        const read = await ctx.box.exec(["cat", `${HOME}/models.json`])
+        await ctx.box.write(`${HOME}/models.json`, directCatalog(read.stdout, ctx.model))
+      }
       // Codex finds codex-code-mode-host next to its own binary.
       await ctx.box.exec(["sh", "-c", `ln -sf /opt/bench/codex/codex-code-mode-host ${BIN}/codex-code-mode-host`])
     },

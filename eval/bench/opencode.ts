@@ -35,8 +35,9 @@ const KINDS: Record<string, ToolKind> = {
   list: "search",
 }
 
-export function openCodeAgent(id: "A" | "B"): Agent {
-  const plugin = id === "B"
+export function openCodeAgent(id: "A" | "B" | "F"): Agent {
+  // B runs lodestar and F the guidance prototype. Either is mounted at the same place.
+  const plugin = id !== "A"
   const xdg = [`XDG_DATA_HOME=${XDG}/data`, `XDG_CONFIG_HOME=${XDG}/config`, `XDG_STATE_HOME=${XDG}/state`, `XDG_CACHE_HOME=${XDG}/cache`]
   const password = crypto.randomUUID()
   const env = (_ctx: Context) => [...xdg, NODE_CA, "OPENCODE_DISABLE_AUTOUPDATE=1", `OPENCODE_PASSWORD=${password}`]
@@ -56,7 +57,7 @@ export function openCodeAgent(id: "A" | "B"): Agent {
 
   return {
     id,
-    label: plugin ? "OpenCode + lodestar" : "OpenCode",
+    label: id === "B" ? "OpenCode + lodestar" : id === "F" ? "OpenCode + guidance" : "OpenCode",
     async setup(ctx) {
       await ctx.box.exec(["mkdir", "-p", ...["data", "config", "state", "cache"].map((dir) => `${XDG}/${dir}`)])
       const imported = await ctx.box.exec([`${BIN}/opencode`, "auth", "import", "--standalone"], {
@@ -79,7 +80,7 @@ export function openCodeAgent(id: "A" | "B"): Agent {
         share: "disabled",
         ...(plugin ? { plugins: [PLUGIN] } : {}),
       }
-      const serverEnv = [...env(ctx), `OPENCODE_CONFIG_CONTENT=${JSON.stringify(config)}`, ...(plugin ? [`LODESTAR_TRACE=${STATE}/trace.jsonl`] : [])]
+      const serverEnv = [...env(ctx), `OPENCODE_CONFIG_CONTENT=${JSON.stringify(config)}`, ...(id === "B" ? [`LODESTAR_TRACE=${STATE}/trace.jsonl`] : [])]
       await ctx.box.spawn(`exec ${BIN}/opencode serve --hostname 127.0.0.1 --port 4096 > ${STATE}/server.out 2> ${STATE}/server.err`, serverEnv)
       const deadline = Date.now() + 90_000
       for (;;) {
@@ -103,7 +104,7 @@ export function openCodeAgent(id: "A" | "B"): Agent {
     },
 
     async collect(ctx) {
-      for (const file of ["turn.jsonl", "turn.err", "server.err", ...(plugin ? ["trace.jsonl"] : [])]) await ctx.box.copyOut(`${STATE}/${file}`, path.join(ctx.root, file))
+      for (const file of ["turn.jsonl", "turn.err", "server.err", ...(id === "B" ? ["trace.jsonl"] : [])]) await ctx.box.copyOut(`${STATE}/${file}`, path.join(ctx.root, file))
       const events = await Bun.file(path.join(ctx.root, "turn.jsonl")).text().catch(() => "")
       let sessionID: string | undefined
       for (const line of events.split("\n")) {

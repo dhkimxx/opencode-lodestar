@@ -84,6 +84,14 @@ def results_in(text: str):
             yield body
 
 
+SECRET = {"authorization", "cookie", "chatgpt-account-id", "x-openai-fedramp"}
+
+
+def headers_of(flow) -> dict:
+    """The request's headers, with the values of credentials left out."""
+    return {name.lower(): ("<redacted>" if name.lower() in SECRET else value[:200]) for name, value in flow.request.headers.items()}
+
+
 def ip_of(flow) -> str:
     peer = flow.client_conn.peername
     return peer[0] if peer else ""
@@ -113,6 +121,7 @@ class Meter:
             "resp_bytes": len(flow.response.content or b""),
             "seconds": round((flow.response.timestamp_end or 0) - (flow.request.timestamp_start or 0), 3),
         }
+        entry["headers"] = headers_of(flow)
         try:
             body = json.loads(flow.request.get_text(strict=False) or "null")
             if isinstance(body, dict):
