@@ -35,8 +35,8 @@ const KINDS: Record<string, ToolKind> = {
   list: "search",
 }
 
-export function openCodeAgent(id: "A" | "B" | "F"): Agent {
-  // B runs lodestar and F the guidance prototype. Either is mounted at the same place.
+export function openCodeAgent(id: "A" | "B" | "F" | "G"): Agent {
+  // B runs lodestar, F the guidance prototype, and G the prototype that moves the tools into Code Mode. Each is mounted at the same place.
   const plugin = id !== "A"
   const xdg = [`XDG_DATA_HOME=${XDG}/data`, `XDG_CONFIG_HOME=${XDG}/config`, `XDG_STATE_HOME=${XDG}/state`, `XDG_CACHE_HOME=${XDG}/cache`]
   const password = crypto.randomUUID()
@@ -57,7 +57,7 @@ export function openCodeAgent(id: "A" | "B" | "F"): Agent {
 
   return {
     id,
-    label: id === "B" ? "OpenCode + lodestar" : id === "F" ? "OpenCode + guidance" : "OpenCode",
+    label: { A: "OpenCode", B: "OpenCode + lodestar", F: "OpenCode + guidance", G: "OpenCode + code mode" }[id],
     async setup(ctx) {
       await ctx.box.exec(["mkdir", "-p", ...["data", "config", "state", "cache"].map((dir) => `${XDG}/${dir}`)])
       const imported = await ctx.box.exec([`${BIN}/opencode`, "auth", "import", "--standalone"], {
@@ -135,6 +135,16 @@ export function openCodeAgent(id: "A" | "B" | "F"): Agent {
         for (const part of message.content) {
           if (part.type !== "tool") continue
           const tool = part as import("../lib/session").ToolPart
+          // Code Mode runs tools from one `execute` call. Each of those counts as a tool call, as in the other harnesses.
+          const nested = (tool.state as { metadata?: { toolCalls?: { tool: string; status: string; input?: Record<string, unknown> }[] } }).metadata?.toolCalls
+          if (tool.name === "execute" && nested?.length) {
+            for (const call of nested) {
+              const args = call.input ?? {}
+              const target = args.path ?? args.filePath
+              events.push({ type: "tool", name: call.tool, kind: KINDS[call.tool] ?? "other", file: typeof target === "string" ? target : undefined, command: typeof args.command === "string" ? args.command : undefined, ok: call.status === "completed" })
+            }
+            continue
+          }
           const input = tool.state.input ?? {}
           const file = input.path ?? input.filePath
           events.push({

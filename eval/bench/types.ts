@@ -63,7 +63,7 @@ export interface Compaction {
 export type Trace = (ToolCall | Compaction)[]
 
 export interface Agent {
-  id: "A" | "B" | "C" | "D" | "E" | "F"
+  id: "A" | "B" | "C" | "D" | "E" | "F" | "G"
   /** What the harness is called in tables. */
   label: string
   /** Puts the credentials and settings in the container. */
