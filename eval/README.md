@@ -9,7 +9,7 @@ Each run follows the benchmark's own protocol:
 - **The agent gets 50 minutes.** When time runs out, its partial work is graded.
 - **Grading happens in a fresh container.** The agent's diff is applied there and the task's own verifier runs. Grading has normal network access, since some Go tasks fetch modules during tests.
 
-Results for the current release are in [results/v0.3.0.md](results/v0.3.0.md).
+Results are in `results/`, one file for each version and model: [v0.3.0 with DeepSeek V4.1 Flash](results/v0.3.0-deepseek-v4.1-flash.md) and [v0.3.1 with GPT-6 Luna](results/v0.3.1-gpt-6-luna.md).
 
 ## Setup
 

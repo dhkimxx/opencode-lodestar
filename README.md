@@ -123,7 +123,7 @@ Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os), with 
 | Minutes | 15.1 | 9.8 (−36%) |
 | Files read again after compaction | 32.9 | 9.5 (−71%) |
 
-In 3 of the 28 pairs only lodestar resolved the task, and in 1 only OpenCode alone did. The differences in cost, tool calls, time, and files read again are larger than run-to-run noise. The resolve rate isn't settled: 28 pairs can't tell the difference apart from chance. Details are in [eval/results/v0.3.0.md](eval/results/v0.3.0.md).
+In 3 of the 28 pairs only lodestar resolved the task, and in 1 only OpenCode alone did. The differences in cost, tool calls, time, and files read again are larger than run-to-run noise. The resolve rate isn't settled: 28 pairs can't tell the difference apart from chance. Details are in [eval/results/v0.3.0-deepseek-v4.1-flash.md](eval/results/v0.3.0-deepseek-v4.1-flash.md).
 
 ### GPT-6 Luna
 
@@ -140,7 +140,7 @@ In 3 of the 28 pairs only lodestar resolved the task, and in 1 only OpenCode alo
 | Compactions | 6.0 | 10.3 (+72%) |
 | Minutes | 6.0 | 7.7 (+28%) |
 
-In 8 of the 22 pairs only lodestar resolved the task, and in 2 only OpenCode alone did. Both resolved 10 and neither resolved 2. On those 10, lodestar cost about 3.3 times as much ($0.061 against $0.018). The difference in tasks resolved isn't settled: 22 pairs from 11 tasks can't rule out chance. Tool calls and re-reads count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/gpt-6-luna.md](eval/results/gpt-6-luna.md).
+In 8 of the 22 pairs only lodestar resolved the task, and in 2 only OpenCode alone did. Both resolved 10 and neither resolved 2. On those 10, lodestar cost about 3.3 times as much ($0.061 against $0.018). The difference in tasks resolved isn't settled: 22 pairs from 11 tasks can't rule out chance. Tool calls and re-reads count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/v0.3.1-gpt-6-luna.md](eval/results/v0.3.1-gpt-6-luna.md).
 
 ## Development
 
