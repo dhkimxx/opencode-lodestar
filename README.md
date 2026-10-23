@@ -19,7 +19,7 @@ When a long session fills the context window, OpenCode replaces the conversation
 
 ## Requirements
 
-OpenCode 2. Tested with OpenCode 2.0.27. OpenCode 1 is not supported.
+OpenCode 2.1 or newer. Tested with OpenCode 2.1.2. OpenCode 1 is not supported.
 
 ## Install
 
@@ -40,7 +40,7 @@ This installs the plugin and adds it to the `plugins` list in your `opencode.jso
 To install a specific release, add its tag:
 
 ```sh
-opencode plugin add github:dhkimxx/opencode-lodestar#v0.3.1
+opencode plugin add github:dhkimxx/opencode-lodestar#v0.4.0
 ```
 
 Update or remove the plugin with the same name you installed it with:

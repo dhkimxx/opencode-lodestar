@@ -56,7 +56,7 @@ Compaction has to be forced early, because sessions on these tasks rarely grow a
 - **`--compact-at` is the better one.** OpenCode keeps its default threshold. The harness reads the size of each request from the agent's events and asks for a compaction when it reaches the given number.
   - It checks every five seconds, so a compaction can come a step or two after the size is reached.
   - OpenCode then has room to send the compaction request as it is.
-- **`--threshold` lowers OpenCode's own threshold.** OpenCode also caps its compaction request at that threshold, and it estimates the request's size at four characters per token. When the estimate doesn't fit, it rebuilds the history as plain text, which loses the prompt cache with or without lodestar.
+- **`--threshold` lowers OpenCode's own threshold.** In OpenCode 2.0, OpenCode also caps its compaction request at that threshold, and it estimates the request's size at four characters per token. When the estimate doesn't fit, it rebuilds the history as plain text, which loses the prompt cache with or without lodestar. OpenCode 2.1 sizes the request by the model's window instead, so this no longer happens there.
   - At 40,000 tokens, this happened to 46% of DeepSeek V4.1 Flash's compactions.
   - The v0.3.0 results used `--compact-at 40000` instead, and no compaction request was rebuilt.
 

@@ -3,7 +3,7 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-24
 
 ### Added
 
@@ -12,7 +12,7 @@ This project follows [Semantic Versioning](https://semver.org).
 
 ### Changed
 
-- Needs OpenCode 2.1 or newer for the `/lodestar` command, and is built against OpenCode 2.1.2.
+- Needs OpenCode 2.1 or newer for the `/lodestar` command, and was tested with OpenCode 2.1.2.
 
 ## [0.3.1] - 2026-10-21
 
@@ -62,6 +62,7 @@ This project follows [Semantic Versioning](https://semver.org).
 - After eight tool calls in a row with no message to the user, the agent is asked for a one-line recap.
 - An evaluation harness that runs SWE-bench Pro tasks with and without lodestar, inside each task's own container.
 
+[0.4.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.4.0
 [0.3.1]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.1
 [0.3.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.2.0

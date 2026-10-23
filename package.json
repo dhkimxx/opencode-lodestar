@@ -1,6 +1,6 @@
 {
   "name": "@dhkimxx/opencode-lodestar",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Keeps OpenCode on track through compaction. Puts your request, the agent's latest steps, and the files it was working on back after each compaction.",
   "keywords": [
     "opencode",
