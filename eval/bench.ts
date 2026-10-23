@@ -21,7 +21,7 @@ const { values } = parseArgs({
     "tasks-dir": { type: "string", default: path.join(CACHE, "SWE-bench_Pro-os/v2/tasks") },
     /** Comma-separated task IDs, or a JSON file with an array of them. */
     tasks: { type: "string" },
-    /** A, B, C, D: OpenCode, OpenCode with lodestar, omp, Codex. E: Codex without code mode. F: OpenCode with the guidance prototype. G: OpenCode with its tools moved into Code Mode. */
+    /** A, B, C, D: OpenCode, OpenCode with lodestar, omp, Codex. E: Codex without code mode. F: OpenCode with the guidance prototype. G: OpenCode with its tools moved into Code Mode. H: G with lodestar. */
     harnesses: { type: "string", default: "A,B,C,D" },
     model: { type: "string", default: "gpt-6-luna" },
     effort: { type: "string", default: "high" },
@@ -40,7 +40,7 @@ const { values } = parseArgs({
 if (!values.out) throw new Error("pass --out, the directory runs are written to")
 const out = path.resolve(values.out)
 
-const AGENTS: Record<string, () => Agent> = { A: () => openCodeAgent("A"), B: () => openCodeAgent("B"), C: ompAgent, D: () => codexAgent(), E: () => codexAgent(true), F: () => openCodeAgent("F"), G: () => openCodeAgent("G") }
+const AGENTS: Record<string, () => Agent> = { A: () => openCodeAgent("A"), B: () => openCodeAgent("B"), C: ompAgent, D: () => codexAgent(), E: () => codexAgent(true), F: () => openCodeAgent("F"), G: () => openCodeAgent("G"), H: () => openCodeAgent("H") }
 const harnesses = values.harnesses.split(",")
 for (const id of harnesses) if (!AGENTS[id]) throw new Error(`unknown harness ${id}`)
 
@@ -130,7 +130,7 @@ async function runOne(task: Task, id: string): Promise<BenchResult> {
   await rm(root, { recursive: true, force: true })
   await mkdir(root, { recursive: true })
   const result: BenchResult = { harness: id, label: agent.label, task: task.id, model: values.model, effort: values.effort, threshold: thresholdFor(id), ok: false }
-  const box = new Box(task.image, { plugin: id === "B" ? path.resolve(values.plugin) : id === "F" ? path.join(import.meta.dir, "bench/guidance") : id === "G" ? path.join(import.meta.dir, "bench/codemode") : undefined, opencodeMusl: await opencodeMusl() })
+  const box = new Box(task.image, { plugin: id === "B" || id === "H" ? path.resolve(values.plugin) : id === "F" ? path.join(import.meta.dir, "bench/guidance") : id === "G" ? path.join(import.meta.dir, "bench/codemode") : undefined, opencodeMusl: await opencodeMusl(), plugin2: id === "H" ? path.join(import.meta.dir, "bench/codemode") : undefined })
   try {
     await pull(task.image)
     await box.start()

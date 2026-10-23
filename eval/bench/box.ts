@@ -29,6 +29,8 @@ export const ALLOWED_HOSTS = ["chatgpt.com"]
 export interface Mounts {
   /** A lodestar checkout, for the harness that runs it. */
   plugin?: string
+  /** A second plugin, for the harness that runs two. */
+  plugin2?: string
 }
 
 /** One task container, with what every harness needs: the tools, the proxy, and the proxy's certificate. */
@@ -57,6 +59,7 @@ export class Box {
       ...mount(OPENCODE, "opencode-glibc"), ...mount(this.mounts.opencodeMusl, "opencode-musl"),
       ...mount(RIPGREP, "rg"), ...mount(CODEX_DIR, "codex"), ...mount(OMP_DIR, "omp"), ...mount(CA_CERT, "ca.pem"),
       ...(this.mounts.plugin ? mount(this.mounts.plugin, "lodestar") : []),
+      ...(this.mounts.plugin2 ? mount(this.mounts.plugin2, "plugin2") : []),
       "--entrypoint", "tail", this.image, "-f", "/dev/null",
     ])
     if (started.code !== 0) throw new Error(`docker run failed: ${started.stderr.trim().slice(-500)}`)
