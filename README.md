@@ -126,13 +126,18 @@ The differences in cost, tool calls, time, and files read again are larger than 
 
 22 task pairs, at reasoning effort `high`.
 
-| Per run | OpenCode alone | With lodestar |
+| Per run, over 22 pairs | OpenCode alone | With lodestar |
 | --- | --- | --- |
 | Tasks resolved | 12 | 18 |
 | Cost | $0.034 | $0.056 (+66%) |
+| Cost per resolved task | $0.062 | $0.069 (+10%) |
+| Uncached prompt tokens | 212k | 382k (+81%) |
+| Tool calls | 73 | 125 (+71%) |
+| Files read again after compaction | 19.3 | 59.9 (+210%) |
+| Compactions | 6.0 | 10.3 (+72%) |
 | Minutes | 6.0 | 7.7 (+28%) |
 
-lodestar resolved more tasks here too, but on this model it spends more per run. The resolve rate isn't settled either. Details are in [eval/results/gpt-6-luna.md](eval/results/gpt-6-luna.md).
+lodestar resolved more tasks here too, but on this model it does more work per run and so costs more, where on DeepSeek it cost less. The resolve rate isn't settled either. Tool calls and re-reads count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/gpt-6-luna.md](eval/results/gpt-6-luna.md).
 
 ## Development
 

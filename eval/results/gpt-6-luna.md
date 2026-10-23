@@ -19,9 +19,17 @@ Means per run, over the 22 pairs.
 | --- | --- | --- | --- |
 | Tasks resolved | 12 of 22 | 18 of 22 | |
 | Cost | $0.034 | $0.056 | +66% |
+| Cost per resolved task | $0.062 | $0.069 | +10% |
+| Prompt tokens | 841k | 1,160k | +38% |
+| Uncached prompt tokens | 212k | 382k | +81% |
+| Output tokens | 13.2k | 20.8k | +58% |
+| Model requests | 48 | 59 | +23% |
 | Tool calls | 73 | 125 | +71% |
-| Minutes | 6.0 | 7.7 | +28% |
+| Files read again after compaction | 19.3 | 59.9 | +210% |
 | Compactions | 6.0 | 10.3 | +72% |
+| Minutes | 6.0 | 7.7 | +28% |
+
+Tool calls and re-reads count shell commands that print files (`cat`, `sed -n`) as well as the `read` tool, so they aren't comparable with the v0.3.0 rows, which count only the `read` tool. Cost per resolved task is total cost divided by tasks resolved.
 
 ## What to take from it
 
