@@ -33,7 +33,7 @@ Tool calls and re-reads count shell commands that print files (`cat`, `sed -n`) 
 
 ## What to take from it
 
-- lodestar resolved more tasks. B led in both rounds, 10 against 6 and 8 against 6. On DeepSeek V4.1 Flash it also resolved more, 27 against 25.
-- On this model it spends more per run, where on DeepSeek it spent less. It also costs more on the four tasks both configurations resolved every time ($0.073 against $0.021). Per resolved task the gap is small, $0.069 against $0.062, because OpenCode alone spends a lot on the tasks it fails.
+- lodestar resolved more tasks. In 8 of the 22 pairs only B resolved the task, in 2 only A did, in 10 both did, and in 2 neither did. B led in both rounds, 10 against 6 and 8 against 6. On DeepSeek V4.1 Flash it resolved 27 against 25.
+- On this model it spends more per run, where on DeepSeek it spent less. The extra cost is not just the cost of resolving more: in the 10 pairs both resolved, B cost $0.061 against $0.018 for A, with about 2.8 times the tool calls and 5.8 times the compactions. Per resolved task the gap is small, $0.069 against $0.062, because OpenCode alone spends a lot on the tasks it fails. Why lodestar does more work here hasn't been checked.
 - The difference in tasks resolved is consistent but not settled: 22 pairs from 11 tasks can't rule out chance.
 - The tasks were picked for compacting often, so they favor what lodestar does.

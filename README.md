@@ -106,6 +106,9 @@ The line `/lodestar` prints is hidden from the model.
 
 ## Results
 
+- **DeepSeek V4.1 Flash:** about the same tasks resolved (25 against 27), at 39% lower cost.
+- **GPT-6 Luna:** more tasks resolved (12 against 18), at 66% higher cost.
+
 Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os), with each task worked by OpenCode alone and by OpenCode with lodestar, then graded by its hidden tests. Sessions were compacted early so that most runs compacted, many of them several times.
 
 ### DeepSeek V4.1 Flash
@@ -137,7 +140,7 @@ The differences in cost, tool calls, time, and files read again are larger than 
 | Compactions | 6.0 | 10.3 (+72%) |
 | Minutes | 6.0 | 7.7 (+28%) |
 
-lodestar resolved more tasks here too, but on this model it does more work per run and so costs more, where on DeepSeek it cost less. The resolve rate isn't settled either. Tool calls and re-reads count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/gpt-6-luna.md](eval/results/gpt-6-luna.md).
+In 8 of the 22 pairs only lodestar resolved the task, and in 2 only OpenCode alone did. Both resolved 10 and neither resolved 2. The difference isn't settled: 22 pairs from 11 tasks can't rule out chance. Tool calls and re-reads count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/gpt-6-luna.md](eval/results/gpt-6-luna.md).
 
 ## Development
 
