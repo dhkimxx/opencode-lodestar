@@ -1,16 +1,19 @@
 // Tables from a bench.ts output directory: one row per harness, and the same for the tasks every harness finished.
-// Usage: bun eval/bench-report.ts <out dir> [--tasks]
+// Usage: bun eval/bench-report.ts <out dir> [<out dir> ...] [--tasks]
+// Several directories are the same runs repeated: each harness then has one run per task and directory.
 import { readdir } from "node:fs/promises"
 import path from "node:path"
 import type { BenchResult } from "./bench"
 
-const dir = process.argv[2]
-if (!dir) throw new Error("usage: bench-report.ts <out dir> [--tasks]")
+const dirs = process.argv.slice(2).filter((arg) => !arg.startsWith("--"))
+if (dirs.length === 0) throw new Error("usage: bench-report.ts <out dir> [<out dir> ...] [--tasks]")
 const results: BenchResult[] = []
-for (const entry of await readdir(dir, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue
-  const file = Bun.file(path.join(dir, entry.name, "result.json"))
-  if (await file.exists()) results.push((await file.json()) as BenchResult)
+for (const dir of dirs) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const file = Bun.file(path.join(dir, entry.name, "result.json"))
+    if (await file.exists()) results.push((await file.json()) as BenchResult)
+  }
 }
 const counted = results.filter((result) => result.ok && result.meter && result.trace)
 const harnesses = [...new Set(counted.map((result) => result.harness))].sort()
@@ -34,7 +37,7 @@ function table(set: string[]) {
     return [
       `${id} ${label}`,
       String(group.length),
-      `${group.filter((result) => result.resolved).length}`,
+      `${group.filter((result) => result.resolved).length}/${group.length}`,
       mean(group.map((result) => result.meter!.cost)).toFixed(4),
       k(mean(group.map((result) => result.meter!.uncached))),
       k(mean(group.map((result) => result.meter!.cached))),
