@@ -67,7 +67,25 @@ To update, run `git pull` in that folder.
 
 ## Usage
 
-There is nothing to do. lodestar works whenever OpenCode compacts a session, whether automatically or through `/compact`. It adds nothing to the conversation you see: what it puts back goes only to the model.
+There is nothing to do. lodestar works whenever OpenCode compacts a session, whether automatically or through `/compact`. Apart from the one line `/lodestar` prints, it adds nothing to the conversation you see: what it puts back goes only to the model.
+
+### Turning it on and off
+
+| To do this | Do this |
+| --- | --- |
+| Turn lodestar off | `/lodestar off` |
+| Turn it on again | `/lodestar on` |
+| See whether it is on | `/lodestar status` |
+
+While it is off, lodestar records and restores nothing, and OpenCode compacts as it does without it. What lodestar knew about a session before you turned it off is kept, but it misses what happened in between. The choice is saved, so it lasts across restarts and applies to every session.
+
+To start with lodestar off, set `enabled` in the plugin's options in `opencode.json`. A choice made with `/lodestar` wins over this.
+
+```json
+{ "plugins": [{ "package": "github:dhkimxx/opencode-lodestar", "options": { "enabled": false } }] }
+```
+
+The line `/lodestar` prints is hidden from the model.
 
 ## How it works
 

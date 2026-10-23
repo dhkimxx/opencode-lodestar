@@ -32,6 +32,16 @@ export function userMessage(messages: readonly Message[], text: string): Message
   return host.user(text)
 }
 
+/** The lines `/lodestar` posts to the conversation. They are for the user, and the model doesn't need to read them. */
+const NOTICE = /^lodestar (is (on|off)\.|did not understand)/
+
+export function removeNotices(messages: Message[]) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const text = textOf(messages[index] as Message)
+    if (text.length < 300 && NOTICE.test(text)) messages.splice(index, 1)
+  }
+}
+
 /** Inserts a reminder at the end of the request, before the user's newest message when that comes last. */
 export function insertNearEnd(messages: Message[], message: Message) {
   const at = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length

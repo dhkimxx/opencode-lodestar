@@ -3,6 +3,17 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- `/lodestar off` turns lodestar off, `/lodestar on` turns it on again, and `/lodestar status` says which it is. The choice is saved and lasts across restarts.
+- `enabled: false` in the plugin's options starts lodestar off. A choice made with `/lodestar` wins over it.
+
+### Changed
+
+- Needs OpenCode 2.1 or newer for the `/lodestar` command, and is built against OpenCode 2.1.2.
+
 ## [0.3.1] - 2026-10-21
 
 ### Fixed

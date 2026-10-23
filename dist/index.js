@@ -206,6 +206,14 @@ function userMessage(messages, text) {
     return;
   return host.user(text);
 }
+var NOTICE = /^lodestar (is (on|off)\.|did not understand)/;
+function removeNotices(messages) {
+  for (let index = messages.length - 1;index >= 0; index--) {
+    const text = textOf(messages[index]);
+    if (text.length < 300 && NOTICE.test(text))
+      messages.splice(index, 1);
+  }
+}
 function insertNearEnd(messages, message) {
   const at = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
   messages.splice(at, 0, message);
@@ -703,6 +711,55 @@ class Store {
   }
 }
 
+// src/switch.ts
+var KEY = "enabled";
+
+class Switch {
+  storage;
+  configured;
+  override;
+  constructor(storage, configured) {
+    this.storage = storage;
+    this.configured = configured;
+  }
+  async load() {
+    try {
+      const saved = await this.storage.get(KEY);
+      if (typeof saved === "boolean")
+        this.override = saved;
+    } catch {}
+  }
+  get on() {
+    return this.override ?? this.configured ?? true;
+  }
+  get source() {
+    return this.override !== undefined ? "command" : this.configured !== undefined ? "config" : "default";
+  }
+  async set(value) {
+    this.override = value;
+    await this.storage.set(KEY, value).catch(() => {});
+  }
+}
+function configured(options) {
+  const value = options?.enabled;
+  return typeof value === "boolean" ? value : undefined;
+}
+function parseAction(text) {
+  const word = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
+  if (word === "" || word === "status")
+    return "status";
+  if (word === "on" || word === "off")
+    return word;
+  return;
+}
+var USAGE = "lodestar did not understand that. Use /lodestar on, /lodestar off, or /lodestar status.";
+function describe(state) {
+  if (state.on)
+    return "lodestar is on. It restores what you were working on after each compaction.";
+  const how = state.source === "config" ? "`enabled` is false in its options. Run /lodestar on to turn it on" : "Run /lodestar on to turn it on again";
+  return `lodestar is off. It records and restores nothing. ${how}.`;
+}
+
 // src/work.ts
 import path5 from "path";
 var TEST_COMMAND = /(^|[\s;&|(/])(pytest|py\.test|tox|nox|jest|vitest|mocha|phpunit|rspec|ctest)\b|\b(go|cargo|dotnet|mix|swift|deno|bun) test\b|\b(npm|pnpm|yarn)( run)? test|\bmake (test|check)\b|\bunittest\b|\b(mvn|gradlew?)\b.*\btest\b/;
@@ -805,6 +862,9 @@ var src_default = Plugin.define({
 `).catch(() => {});
     };
     const copy = joinCopies();
+    const power = new Switch(ctx.storage, configured(ctx.options));
+    await power.load();
+    const active = () => copy.leads() && power.on;
     const store = new Store(ctx.storage);
     const registrations = [];
     const windows = new Map;
@@ -869,13 +929,13 @@ var src_default = Plugin.define({
     }
     const shellStarts = new Map;
     registrations.push(await ctx.tool.hook("execute.before", async (event) => {
-      if (!copy.leads())
+      if (!active())
         return;
       if (SHELL_TOOLS.has(event.tool))
         shellStarts.set(event.id, Date.now());
     }));
     registrations.push(await ctx.tool.hook("execute.after", async (event) => {
-      if (!copy.leads())
+      if (!active())
         return;
       const state = await store.get(event.sessionID);
       const directory = await directoryOf(event.sessionID, state);
@@ -896,7 +956,7 @@ var src_default = Plugin.define({
       store.save(event.sessionID);
     }));
     registrations.push(await ctx.session.hook("prompt", async (event) => {
-      if (!copy.leads())
+      if (!active())
         return;
       const state = await store.get(event.sessionID);
       recordRequest(state, event.prompt.text);
@@ -905,8 +965,11 @@ var src_default = Plugin.define({
     registrations.push(await ctx.session.hook("compaction", async (event) => {
       if (!copy.leads())
         return;
-      const state = await store.get(event.sessionID);
       const messages = event.messages;
+      removeNotices(messages);
+      if (!power.on)
+        return;
+      const state = await store.get(event.sessionID);
       state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => message.content)));
       state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS;
       store.save(event.sessionID);
@@ -916,8 +979,11 @@ var src_default = Plugin.define({
     registrations.push(await ctx.session.hook("context", async (event) => {
       if (!copy.leads())
         return;
-      const state = await store.get(event.sessionID);
       const messages = event.messages;
+      removeNotices(messages);
+      if (!power.on)
+        return;
+      const state = await store.get(event.sessionID);
       let changed = false;
       if (on("T2"))
         await restoreInto(event.sessionID, messages, event.model);
@@ -945,9 +1011,22 @@ var src_default = Plugin.define({
       if (changed)
         store.save(event.sessionID);
     }));
+    registrations.push(await ctx.command.transform((editor) => editor.add({
+      name: "lodestar",
+      description: "Turn lodestar on or off: /lodestar on, off, or status",
+      execute: async (input) => {
+        if (!copy.leads())
+          return;
+        const action = parseAction(input.prompt.text);
+        if (action === "on" || action === "off")
+          await power.set(action === "on");
+        const text = action ? describe(power) : USAGE;
+        await ctx.session.synthetic({ sessionID: input.sessionID, text, description: text, resume: false });
+      }
+    })));
     const abort = new AbortController;
     async function handle(event) {
-      if (!copy.leads())
+      if (!active())
         return;
       const data = event.data ?? {};
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined;

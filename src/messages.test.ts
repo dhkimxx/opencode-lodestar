@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { Message } from "@opencode/ai"
 import { touchedFiles } from "./files"
-import { checkpointIndex, insertNearEnd, userMessage } from "./messages"
+import { checkpointIndex, insertNearEnd, removeNotices, textOf, userMessage } from "./messages"
 
 class FakeMessage {
   constructor(
@@ -40,4 +40,11 @@ test("knows which files read, edit, write, and patch touch", () => {
     touchedFiles("patch", { patchText: "" }, { applied: [{ type: "update", target: "c.ts" }, { type: "delete", target: "d.ts" }] }, "/repo"),
   ).toEqual({ read: [], edited: ["/repo/c.ts"] })
   expect(touchedFiles("shell", { command: "ls" }, undefined, "/repo")).toEqual({ read: [], edited: [] })
+})
+
+test("removes the lines /lodestar posts, and only those", () => {
+  const user = (text: string) => ({ role: "user", content: [{ type: "text", text }] }) as unknown as Message
+  const messages = [user("fix the bug"), user("lodestar is off. It records and restores nothing."), user("lodestar is on. It restores what you were working on."), user("lodestar did not understand that."), user("lodestar is great, can you check it?")]
+  removeNotices(messages)
+  expect(messages.map(textOf)).toEqual(["fix the bug", "lodestar is great, can you check it?"])
 })

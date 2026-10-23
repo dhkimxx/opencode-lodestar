@@ -4,10 +4,11 @@ import { Plugin } from "@opencode/plugin"
 import { joinCopies } from "./copies"
 import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"
 import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES, QUICK_REPEAT_CALLS } from "./limits"
-import { checkpointIndex, insertNearEnd, textOf, userMessage } from "./messages"
+import { checkpointIndex, insertNearEnd, removeNotices, textOf, userMessage } from "./messages"
 import { recitation, staleFiles, staleNotice } from "./reminders"
 import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
+import { configured, describe, parseAction, Switch, USAGE } from "./switch"
 import { estimateTokens } from "./tokens"
 import { recordCall, recordRequest, recordText } from "./work"
 
@@ -30,6 +31,10 @@ export default Plugin.define({
 
     // The same plugin can be configured twice. Every hook below returns early unless this copy leads.
     const copy = joinCopies()
+    // Off, lodestar records nothing and restores nothing, and OpenCode compacts as it does without it.
+    const power = new Switch(ctx.storage, configured(ctx.options))
+    await power.load()
+    const active = () => copy.leads() && power.on
     const store = new Store(ctx.storage)
     const registrations: { dispose: () => Promise<void> }[] = []
 
@@ -108,7 +113,7 @@ export default Plugin.define({
     const shellStarts = new Map<string, number>()
     registrations.push(
       await ctx.tool.hook("execute.before", async (event) => {
-        if (!copy.leads()) return
+        if (!active()) return
         if (SHELL_TOOLS.has(event.tool)) shellStarts.set(event.id, Date.now())
       }),
     )
@@ -117,7 +122,7 @@ export default Plugin.define({
     // file looked.
     registrations.push(
       await ctx.tool.hook("execute.after", async (event) => {
-        if (!copy.leads()) return
+        if (!active()) return
         const state = await store.get(event.sessionID)
         const directory = await directoryOf(event.sessionID, state)
         state.toolStreak++
@@ -141,7 +146,7 @@ export default Plugin.define({
     // The user's requests, word for word. After a compaction the summary has them only in its own words.
     registrations.push(
       await ctx.session.hook("prompt", async (event) => {
-        if (!copy.leads()) return
+        if (!active()) return
         const state = await store.get(event.sessionID)
         recordRequest(state, event.prompt.text)
         store.save(event.sessionID)
@@ -155,8 +160,10 @@ export default Plugin.define({
     registrations.push(
       await ctx.session.hook("compaction", async (event) => {
         if (!copy.leads()) return
-        const state = await store.get(event.sessionID)
         const messages = event.messages as Message[]
+        removeNotices(messages)
+        if (!power.on) return
+        const state = await store.get(event.sessionID)
         state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
         // A compaction right after the previous one means the context refills fast, so the next restoration stays small.
         state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS
@@ -169,8 +176,10 @@ export default Plugin.define({
     registrations.push(
       await ctx.session.hook("context", async (event) => {
         if (!copy.leads()) return
-        const state = await store.get(event.sessionID)
         const messages = event.messages as Message[]
+        removeNotices(messages)
+        if (!power.on) return
+        const state = await store.get(event.sessionID)
         let changed = false
         if (on("T2")) await restoreInto(event.sessionID, messages, event.model)
         if (on("T6")) {
@@ -197,9 +206,26 @@ export default Plugin.define({
       }),
     )
 
+    // /lodestar on, off, or status. Only the copy that leads answers, so a second copy stays quiet.
+    registrations.push(
+      await ctx.command.transform((editor) =>
+        editor.add({
+          name: "lodestar",
+          description: "Turn lodestar on or off: /lodestar on, off, or status",
+          execute: async (input) => {
+            if (!copy.leads()) return
+            const action = parseAction(input.prompt.text)
+            if (action === "on" || action === "off") await power.set(action === "on")
+            const text = action ? describe(power) : USAGE
+            await ctx.session.synthetic({ sessionID: input.sessionID, text, description: text, resume: false })
+          },
+        }),
+      ),
+    )
+
     const abort = new AbortController()
     async function handle(event: { type: string; data?: Record<string, unknown> }) {
-      if (!copy.leads()) return
+      if (!active()) return
       const data = event.data ?? {}
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
       if (!sessionID) return
