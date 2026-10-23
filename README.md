@@ -106,18 +106,33 @@ The line `/lodestar` prints is hidden from the model.
 
 ## Results
 
-Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os) with DeepSeek V4.1 Flash at reasoning effort `high`. The tasks were hard issues from 10 open-source repositories. Each was worked once by OpenCode alone and once by OpenCode with lodestar, and graded by its hidden tests. Sessions were compacted whenever they reached 40,000 tokens, so most runs compacted, many of them several times.
+Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os), with each task worked by OpenCode alone and by OpenCode with lodestar, then graded by its hidden tests. Sessions were compacted early so that most runs compacted, many of them several times.
 
-| Per run, over 28 pairs | OpenCode alone | With lodestar |
+### DeepSeek V4.1 Flash
+
+28 task pairs, at reasoning effort `high`.
+
+| Per run | OpenCode alone | With lodestar |
 | --- | --- | --- |
 | Tasks resolved | 25 | 27 |
 | Cost | $0.097 | $0.059 (−39%) |
-| Uncached prompt tokens | 314k | 174k (−45%) |
 | Tool calls | 136 | 80 (−41%) |
 | Minutes | 15.1 | 9.8 (−36%) |
 | Files read again after compaction | 32.9 | 9.5 (−71%) |
 
-The differences in cost, uncached tokens, tool calls, time, and files read again are larger than run-to-run noise. The resolve rate isn't settled yet. lodestar resolved three tasks that OpenCode alone missed and missed one that OpenCode alone resolved, which 28 pairs can't tell apart from chance. Details and limitations are in [eval/results/v0.3.0.md](eval/results/v0.3.0.md).
+The differences in cost, tool calls, time, and files read again are larger than run-to-run noise. The resolve rate isn't settled: 28 pairs can't tell the difference apart from chance. Details are in [eval/results/v0.3.0.md](eval/results/v0.3.0.md).
+
+### GPT-6 Luna
+
+22 task pairs, at reasoning effort `high`.
+
+| Per run | OpenCode alone | With lodestar |
+| --- | --- | --- |
+| Tasks resolved | 12 | 18 |
+| Cost | $0.034 | $0.056 (+66%) |
+| Minutes | 6.0 | 7.7 (+28%) |
+
+lodestar resolved more tasks here too, but on this model it spends more per run. The resolve rate isn't settled either. Details are in [eval/results/gpt-6-luna.md](eval/results/gpt-6-luna.md).
 
 ## Development
 

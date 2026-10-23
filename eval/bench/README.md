@@ -43,7 +43,7 @@ each the same room beyond its own starting prompt is fairer than one number. P0 
 ## Running
 
 ```sh
-bun eval/bench.ts --tasks plans/bench12-tasks.json --harnesses A,B,C,D --threshold A=…,B=…,C=…,D=… --out <dir>
+bun eval/bench.ts --tasks eval/tasks-luna.json --harnesses A,B,C,D --threshold A=…,B=…,C=…,D=… --out <dir>
 bun eval/bench-report.ts <dir> --tasks
 ```
 
