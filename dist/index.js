@@ -523,7 +523,7 @@ ${keepStart(planText, RESTORE_PLAN_TOKENS)}`);
   if (others.length > 0) {
     take("others", `## Other files you used earlier
 
-Not restored. Read them again when your task touches them.
+Only their paths are kept. Open one when your next step needs something from it; you don't need to read them all again.
 
 ${groupByDirectory(others, relative)}`);
   }
@@ -552,7 +552,7 @@ ${skillSections.join(`
     return;
   const text = [
     "<restored-context>",
-    "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more. The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.",
+    "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more." + (restored.size > 0 ? " The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change." : ""),
     "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
     "",
     sections.join(`

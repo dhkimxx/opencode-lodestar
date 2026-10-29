@@ -61,14 +61,28 @@ describe("windowOf", () => {
 })
 
 describe("restored and listed files", () => {
+  test("says the code needn't be read again only when some came back", async () => {
+    const listedOnly = state()
+    listedOnly.requests = ["x".repeat(11_000)]
+    await read(listedOnly, await file("only.ts", lines(200)), 10, [1, 200])
+    const bare = (await buildRestoration(listedOnly, 1_000_000, "key"))?.text ?? ""
+    expect(bare).not.toContain("you don't need to read them again unless they change")
+
+    const withCode = state()
+    await read(withCode, await file("shown.ts", lines(5)), 10, [1, 5])
+    const full = (await buildRestoration(withCode, 1_000_000, "key"))?.text ?? ""
+    expect(full).toContain("## Code you were reading")
+    expect(full).toContain("you don't need to read them again unless they change")
+  })
+
   test("names the files whose content came back and the files only listed by path", async () => {
     const session = state()
     const changed = await file("changed.ts", "export const a = 1\n")
-    edit(session, changed, 10)
+    await edit(session, changed, 10)
     const reads: string[] = []
     for (let index = 0; index < 5; index++) {
       const name = await file(`read${index}.ts`, lines(20))
-      read(session, name, 20 + index, [1, 20])
+      await read(session, name, 20 + index, [1, 20])
       reads.push(name)
     }
     session.compactedTokens = 200_000
@@ -82,7 +96,7 @@ describe("restored and listed files", () => {
   test("doesn't count read-only files as restored when their section didn't fit", async () => {
     const session = state()
     session.requests = ["x".repeat(11_000)]
-    for (let index = 0; index < 3; index++) read(session, await file(`read${index}.ts`, lines(200)), 20 + index, [1, 200])
+    for (let index = 0; index < 3; index++) await read(session, await file(`read${index}.ts`, lines(200)), 20 + index, [1, 200])
     const restoration = await buildRestoration(session, 1_000_000, "key")
     expect(restoration?.budget).toBe(3_000)
     expect(restoration?.sections.reading).toBeUndefined()
@@ -160,7 +174,7 @@ describe("buildRestoration", () => {
     expect(text).toContain("Your last tool calls, oldest first:")
     expect(text).not.toContain("## Files you changed")
     expect(text).not.toContain("Halfway there.")
-    expect(text).toContain("## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n- a.ts (changed)")
+    expect(text).toContain("## Other files you used earlier\n\nOnly their paths are kept. Open one when your next step needs something from it; you don't need to read them all again.\n\n- a.ts (changed)")
   })
 
   test("restores the files the agent edited whole, newest edit first, with the working tree's status", async () => {
@@ -222,7 +236,7 @@ describe("buildRestoration", () => {
     expect(text).not.toContain("99: line 99")
     expect(text.indexOf("### big.ts")).toBeLessThan(text.indexOf("### new.ts"))
     expect(text).not.toContain("### old.ts")
-    expect(text).toContain("## Other files you used earlier\n\nNot restored. Read them again when your task touches them.\n\n- old.ts (read)")
+    expect(text).toContain("## Other files you used earlier\n\nOnly their paths are kept. Open one when your next step needs something from it; you don't need to read them all again.\n\n- old.ts (read)")
     expect(text).not.toContain("Before you finish:")
   })
 
