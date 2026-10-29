@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Message } from "@opencode/ai"
+import type { Message } from "@opencode/ai/effect"
 import { touchedFiles } from "./files"
 import { checkpointIndex, insertNearEnd, removeNotices, textOf, userMessage } from "./messages"
 

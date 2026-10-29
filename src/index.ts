@@ -1,5 +1,5 @@
 import { appendFile } from "node:fs/promises"
-import type { Message } from "@opencode/ai"
+import type { Message } from "@opencode/ai/effect"
 import { Plugin } from "@opencode/plugin"
 import { joinCopies } from "./copies"
 import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"

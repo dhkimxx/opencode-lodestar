@@ -1,4 +1,4 @@
-import type { Message } from "@opencode/ai"
+import type { Message } from "@opencode/ai/effect"
 
 const CHECKPOINT = "<conversation-checkpoint>"
 
