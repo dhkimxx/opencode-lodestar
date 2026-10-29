@@ -79,6 +79,10 @@ export interface SessionState {
   shellRuns?: { start: number; end: number }[]
   /** Estimated size of the conversation at the last compaction. */
   compactedTokens?: number
+  /** The prompt the latest step sent, as the provider counted it. */
+  measuredPrompt?: number
+  /** `measuredPrompt` at the last compaction, to compare with `compactedTokens` in the evaluation trace. */
+  compactedMeasured?: number
   /** What gets put back after the last compaction. It stays fixed until the next one. */
   snapshot?: Snapshot
 }

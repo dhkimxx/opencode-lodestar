@@ -21,6 +21,8 @@ When a long session fills the context window, OpenCode replaces the conversation
 
 OpenCode 2.1 or newer. Tested with OpenCode 2.1.2. OpenCode 1 is not supported.
 
+lodestar restores after the summaries OpenCode writes when it compacts. A model set to compact on the provider's side (`"compaction": { "type": "native" }` in its settings) gets the provider's own record back instead of a summary, so there is nothing for lodestar to restore. Its reminders still work.
+
 ## Install
 
 To install it along with opencode-ask and opencode-delete, use [opencode-kit](https://github.com/dhkimxx/opencode-kit). It also removes copies left over from earlier installs:

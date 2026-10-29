@@ -6,10 +6,10 @@ import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"
 import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES, QUICK_REPEAT_CALLS } from "./limits"
 import { checkpointIndex, insertNearEnd, removeNotices, textOf, userMessage } from "./messages"
 import { recitation, staleFiles, staleNotice } from "./reminders"
-import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf } from "./restore"
+import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf, windowOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
 import { configured, describe, parseAction, Switch, USAGE } from "./switch"
-import { estimateTokens } from "./tokens"
+import { estimateTokens, promptTokens } from "./tokens"
 import { recordCall, recordRequest, recordText } from "./work"
 
 type Feature = "T2" | "T4" | "T6"
@@ -17,6 +17,9 @@ type ModelRef = { readonly providerID: string; readonly id: string }
 
 /** Used when a model's context window can't be looked up. */
 const DEFAULT_WINDOW = 200_000
+
+/** The events lodestar reads. OpenCode 2.1 sends every event regardless; 2.2 sends only these. */
+const EVENTS = ["session.deleted", "session.compaction.ended", "session.text.ended", "session.skill.activated", "session.step.ended"] as const
 
 export default Plugin.define({
   id: "opencode-lodestar",
@@ -50,12 +53,12 @@ export default Plugin.define({
           id?: string
           modelID?: string
           providerID?: string
-          limit?: { context?: number }
+          limit?: { context?: number; input?: number }
         }[]
         const info = models.find(
           (candidate) => candidate.providerID === model.providerID && (candidate.modelID ?? candidate.id) === model.id,
         )
-        const window = info?.limit?.context ?? DEFAULT_WINDOW
+        const window = windowOf(info?.limit, DEFAULT_WINDOW)
         windows.set(key, window)
         return window
       } catch {
@@ -85,12 +88,27 @@ export default Plugin.define({
         const key = summaryKeyOf(summary)
         if (state.snapshot?.summaryKey === key) return state.snapshot
         await directoryOf(sessionID, state)
-        const restoration = await buildRestoration(state, await contextWindow(model), key, visible)
+        const window = await contextWindow(model)
+        const restoration = await buildRestoration(state, window, key, visible)
         state.snapshot = restoration
           ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) }
           : { text: "", tokens: 0, at: Date.now(), summaryKey: key }
         store.save(sessionID)
-        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections, text: state.snapshot.text })
+        trace({
+          sessionID,
+          feature: "T2",
+          event: "snapshot",
+          tokens: state.snapshot.tokens,
+          note: state.snapshot.note,
+          sections: restoration?.sections,
+          budget: restoration?.budget,
+          window,
+          compactedTokens: state.compactedTokens,
+          compactedMeasured: state.compactedMeasured,
+          lean: state.lean,
+          files: restoration?.files,
+          text: state.snapshot.text,
+        })
         return state.snapshot
       })().finally(() => building.delete(sessionID))
       building.set(sessionID, job)
@@ -165,6 +183,7 @@ export default Plugin.define({
         if (!power.on) return
         const state = await store.get(event.sessionID)
         state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
+        state.compactedMeasured = state.measuredPrompt
         // A compaction right after the previous one means the context refills fast, so the next restoration stays small.
         state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS
         store.save(event.sessionID)
@@ -231,6 +250,12 @@ export default Plugin.define({
       if (!sessionID) return
       if (event.type === "session.deleted") return store.remove(sessionID)
       const state = await store.get(sessionID)
+      if (event.type === "session.step.ended") {
+        // Kept in memory for the evaluation trace only; nothing lodestar restores depends on it.
+        const prompt = promptTokens(data.tokens)
+        if (prompt !== undefined) state.measuredPrompt = prompt
+        return
+      }
       if (event.type === "session.compaction.ended") {
         state.callsSinceCompaction = 0
         store.save(sessionID)
@@ -255,7 +280,7 @@ export default Plugin.define({
     void (async () => {
       while (!abort.signal.aborted) {
         try {
-          for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
+          for await (const event of ctx.event.subscribe({ signal: abort.signal, types: [...EVENTS] })) {
             await handle(event as { type: string; data?: Record<string, unknown> }).catch(() => {})
           }
         } catch {}

@@ -14,3 +14,15 @@ export function keepEnds(text: string, tokens: number): string {
   const half = Math.floor(limit / 2)
   return `${text.slice(0, half)}\n[… about ${estimateTokens(text.slice(half, -half))} tokens left out …]\n${text.slice(-half)}`
 }
+
+/**
+ * The prompt a step sent, as the provider counted it: new input plus what was read from or written to its cache. Taken
+ * from the `tokens` of OpenCode's `session.step.ended` event.
+ */
+export function promptTokens(tokens: unknown): number | undefined {
+  const usage = tokens as { input?: unknown; cache?: { read?: unknown; write?: unknown } } | undefined
+  if (typeof usage?.input !== "number") return undefined
+  const read = typeof usage.cache?.read === "number" ? usage.cache.read : 0
+  const write = typeof usage.cache?.write === "number" ? usage.cache.write : 0
+  return usage.input + read + write
+}

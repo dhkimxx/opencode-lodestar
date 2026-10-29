@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { recordTool } from "./files"
-import { buildRestoration, describeRestoration, restoreBudget, summaryFromCheckpoint, summaryKeyOf } from "./restore"
+import { buildRestoration, describeRestoration, restoreBudget, summaryFromCheckpoint, summaryKeyOf, windowOf } from "./restore"
 import type { SessionState } from "./state"
 
 let dir = ""
@@ -48,6 +48,45 @@ describe("restoreBudget", () => {
     expect(restoreBudget(60_000, 1_000_000)).toBe(12_000)
     expect(restoreBudget(900_000, 1_000_000)).toBe(40_000)
     expect(restoreBudget(900_000, 100_000)).toBe(20_000)
+  })
+})
+
+describe("windowOf", () => {
+  test("takes the input limit when the model has one, as OpenCode does", () => {
+    expect(windowOf({ context: 400_000, input: 272_000 }, 200_000)).toBe(272_000)
+    expect(windowOf({ context: 1_000_000 }, 200_000)).toBe(1_000_000)
+    expect(windowOf({ context: 0, input: 0 }, 200_000)).toBe(200_000)
+    expect(windowOf(undefined, 200_000)).toBe(200_000)
+  })
+})
+
+describe("restored and listed files", () => {
+  test("names the files whose content came back and the files only listed by path", async () => {
+    const session = state()
+    const changed = await file("changed.ts", "export const a = 1\n")
+    edit(session, changed, 10)
+    const reads: string[] = []
+    for (let index = 0; index < 5; index++) {
+      const name = await file(`read${index}.ts`, lines(20))
+      read(session, name, 20 + index, [1, 20])
+      reads.push(name)
+    }
+    session.compactedTokens = 200_000
+    const restoration = await buildRestoration(session, 1_000_000, "key")
+    expect(restoration?.budget).toBe(40_000)
+    // The three most recently used read-only files come back; the other two are only listed.
+    expect(restoration?.files.restored.sort()).toEqual(["changed.ts", "read2.ts", "read3.ts", "read4.ts"])
+    expect(restoration?.files.listed.sort()).toEqual(["read0.ts", "read1.ts"])
+  })
+
+  test("doesn't count read-only files as restored when their section didn't fit", async () => {
+    const session = state()
+    session.requests = ["x".repeat(11_000)]
+    for (let index = 0; index < 3; index++) read(session, await file(`read${index}.ts`, lines(200)), 20 + index, [1, 200])
+    const restoration = await buildRestoration(session, 1_000_000, "key")
+    expect(restoration?.budget).toBe(3_000)
+    expect(restoration?.sections.reading).toBeUndefined()
+    expect(restoration?.files.restored).toEqual([])
   })
 })
 

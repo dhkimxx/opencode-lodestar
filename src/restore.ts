@@ -33,6 +33,15 @@ export const PLAN_DIR = path.join(homedir(), ".opencode", "plan")
 export interface Restoration extends Snapshot {
   /** Estimated tokens of each section, by name. */
   sections: Record<string, number>
+  /** What the restoration could use. */
+  budget: number
+  /** Files whose content or changes are shown, and files only listed by path, relative to the session's directory. */
+  files: { restored: string[]; listed: string[] }
+}
+
+/** The prompt limit OpenCode compacts against: the model's input limit when it has one, otherwise its window. */
+export function windowOf(limit: { input?: number; context?: number } | undefined, fallback: number) {
+  return limit?.input || limit?.context || fallback
 }
 
 /** The budget grows with the conversation that was compacted, within fixed bounds. */
@@ -76,7 +85,8 @@ export async function buildRestoration(
   summaryKey: string,
   visible = "",
 ): Promise<Restoration | undefined> {
-  let budget = restoreBudget(state.compactedTokens, window)
+  const total = restoreBudget(state.compactedTokens, window)
+  let budget = total
   const sections: string[] = []
   const sizes: Record<string, number> = {}
   const take = (name: string, text: string) => {
@@ -90,6 +100,8 @@ export async function buildRestoration(
   const relative = (file: string) => (state.directory ? path.relative(state.directory, file) || file : file)
   /** Files whose content or changes are shown, so they aren't listed again. */
   const shown = new Set<string>()
+  /** Files whose content or changes made it into the restoration. */
+  const restored = new Set<string>()
 
   // The summary keeps the task only in its own words, and in evaluation it lost about one identifier in five.
   const present = normalize(visible)
@@ -129,12 +141,18 @@ export async function buildRestoration(
   const edited = records.filter((record) => record.editedAt && !isPlan(record)).sort((a, b) => (b.editedAt ?? 0) - (a.editedAt ?? 0))
   if (edited.length > 0 && !state.lean) {
     const changes = await describeChanges(state, edited, relative, budget)
-    if (changes && take("changes", changes.text)) for (const file of changes.files) shown.add(file)
+    if (changes && take("changes", changes.text)) {
+      for (const file of changes.files) {
+        shown.add(file)
+        restored.add(file)
+      }
+    }
   }
 
   // The parts of read-only files the agent read last. Picked by when they were used: files from a fresh checkout all
   // share one change time, so ordering by it picked read-only files at random.
   const reading: string[] = []
+  const readingFiles: string[] = []
   for (const record of records.filter((record) => !record.editedAt && record.ranges?.length && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
     if (state.lean || reading.length >= RESTORE_READ_FILES) break
     const text = await readText(record.path)
@@ -154,10 +172,12 @@ export async function buildRestoration(
     const label = chosen.map(([start, end]) => `${start}-${end}`).join(", ")
     const body = chosen.map(([start, end]) => fenced(numbered(lines.slice(start - 1, end), start))).join("\n\n")
     reading.push(`### ${relative(record.path)}, lines ${label}\n\n${body}`)
+    readingFiles.push(record.path)
     shown.add(record.path)
   }
   if (reading.length > 0) {
-    take("reading", `## Code you were reading\n\nThe parts of these files you read last, as they are on disk now, with line numbers.\n\n${reading.join("\n\n")}`)
+    const taken = take("reading", `## Code you were reading\n\nThe parts of these files you read last, as they are on disk now, with line numbers.\n\n${reading.join("\n\n")}`)
+    if (taken) for (const file of readingFiles) restored.add(file)
   }
 
   if (state.notes.length > 0 && !state.lean) take("notes", `## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
@@ -206,7 +226,18 @@ export async function buildRestoration(
       : []),
     "</restored-context>",
   ].join("\n")
-  return { text, tokens: estimateTokens(text), at: Date.now(), summaryKey, sections: sizes }
+  return {
+    text,
+    tokens: estimateTokens(text),
+    at: Date.now(),
+    summaryKey,
+    sections: sizes,
+    budget: total,
+    files: {
+      restored: [...restored].map(relative),
+      listed: sizes.others === undefined ? [] : others.map((record) => relative(record.path)),
+    },
+  }
 }
 
 /** How much of the restoration the latest steps may take: a share of the conversation that was compacted, within the rest. */

@@ -347,9 +347,20 @@ function keepEnds(text, tokens) {
 [\u2026 about ${estimateTokens(text.slice(half, -half))} tokens left out \u2026]
 ${text.slice(-half)}`;
 }
+function promptTokens(tokens) {
+  const usage = tokens;
+  if (typeof usage?.input !== "number")
+    return;
+  const read = typeof usage.cache?.read === "number" ? usage.cache.read : 0;
+  const write = typeof usage.cache?.write === "number" ? usage.cache.write : 0;
+  return usage.input + read + write;
+}
 
 // src/restore.ts
 var PLAN_DIR = path4.join(homedir(), ".opencode", "plan");
+function windowOf(limit, fallback) {
+  return limit?.input || limit?.context || fallback;
+}
 function restoreBudget(compactedTokens, window) {
   const fromConversation = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (compactedTokens ?? 0));
   return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromConversation));
@@ -369,7 +380,8 @@ ${fence}`;
 var normalize = (text) => text.replace(/\s+/g, " ").trim();
 var isPlan = (record) => record.path.startsWith(PLAN_DIR + path4.sep);
 async function buildRestoration(state, window, summaryKey, visible = "") {
-  let budget = restoreBudget(state.compactedTokens, window);
+  const total = restoreBudget(state.compactedTokens, window);
+  let budget = total;
   const sections = [];
   const sizes = {};
   const take = (name, text) => {
@@ -383,6 +395,7 @@ async function buildRestoration(state, window, summaryKey, visible = "") {
   };
   const relative = (file) => state.directory ? path4.relative(state.directory, file) || file : file;
   const shown = new Set;
+  const restored = new Set;
   const present = normalize(visible);
   const [first, ...later] = state.requests ?? [];
   const parts = [];
@@ -437,11 +450,15 @@ ${work.join(`
   const edited = records.filter((record) => record.editedAt && !isPlan(record)).sort((a, b) => (b.editedAt ?? 0) - (a.editedAt ?? 0));
   if (edited.length > 0 && !state.lean) {
     const changes = await describeChanges(state, edited, relative, budget);
-    if (changes && take("changes", changes.text))
-      for (const file of changes.files)
+    if (changes && take("changes", changes.text)) {
+      for (const file of changes.files) {
         shown.add(file);
+        restored.add(file);
+      }
+    }
   }
   const reading = [];
+  const readingFiles = [];
   for (const record of records.filter((record) => !record.editedAt && record.ranges?.length && !isPlan(record)).sort((a, b) => lastUsed(b) - lastUsed(a))) {
     if (state.lean || reading.length >= RESTORE_READ_FILES)
       break;
@@ -470,16 +487,20 @@ ${work.join(`
     reading.push(`### ${relative(record.path)}, lines ${label}
 
 ${body}`);
+    readingFiles.push(record.path);
     shown.add(record.path);
   }
   if (reading.length > 0) {
-    take("reading", `## Code you were reading
+    const taken = take("reading", `## Code you were reading
 
 The parts of these files you read last, as they are on disk now, with line numbers.
 
 ${reading.join(`
 
 `)}`);
+    if (taken)
+      for (const file of readingFiles)
+        restored.add(file);
   }
   if (state.notes.length > 0 && !state.lean)
     take("notes", `## Your latest progress notes
@@ -541,7 +562,18 @@ ${skillSections.join(`
     "</restored-context>"
   ].join(`
 `);
-  return { text, tokens: estimateTokens(text), at: Date.now(), summaryKey, sections: sizes };
+  return {
+    text,
+    tokens: estimateTokens(text),
+    at: Date.now(),
+    summaryKey,
+    sections: sizes,
+    budget: total,
+    files: {
+      restored: [...restored].map(relative),
+      listed: sizes.others === undefined ? [] : others.map((record) => relative(record.path))
+    }
+  };
 }
 function recentBudget(compactedTokens, left) {
   return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * (compactedTokens ?? 0), left / 2));
@@ -850,6 +882,7 @@ function recordRequest(state, text) {
 
 // src/index.ts
 var DEFAULT_WINDOW = 200000;
+var EVENTS = ["session.deleted", "session.compaction.ended", "session.text.ended", "session.skill.activated", "session.step.ended"];
 var src_default = Plugin.define({
   id: "opencode-lodestar",
   async setup(ctx) {
@@ -879,7 +912,7 @@ var src_default = Plugin.define({
         const result = await ctx.model.list();
         const models = Array.isArray(result) ? result : result.data ?? [];
         const info = models.find((candidate) => candidate.providerID === model.providerID && (candidate.modelID ?? candidate.id) === model.id);
-        const window = info?.limit?.context ?? DEFAULT_WINDOW;
+        const window = windowOf(info?.limit, DEFAULT_WINDOW);
         windows.set(key, window);
         return window;
       } catch {
@@ -906,10 +939,25 @@ var src_default = Plugin.define({
         if (state.snapshot?.summaryKey === key)
           return state.snapshot;
         await directoryOf(sessionID, state);
-        const restoration = await buildRestoration(state, await contextWindow(model), key, visible);
+        const window = await contextWindow(model);
+        const restoration = await buildRestoration(state, window, key, visible);
         state.snapshot = restoration ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) } : { text: "", tokens: 0, at: Date.now(), summaryKey: key };
         store.save(sessionID);
-        trace({ sessionID, feature: "T2", event: "snapshot", tokens: state.snapshot.tokens, note: state.snapshot.note, sections: restoration?.sections, text: state.snapshot.text });
+        trace({
+          sessionID,
+          feature: "T2",
+          event: "snapshot",
+          tokens: state.snapshot.tokens,
+          note: state.snapshot.note,
+          sections: restoration?.sections,
+          budget: restoration?.budget,
+          window,
+          compactedTokens: state.compactedTokens,
+          compactedMeasured: state.compactedMeasured,
+          lean: state.lean,
+          files: restoration?.files,
+          text: state.snapshot.text
+        });
         return state.snapshot;
       })().finally(() => building.delete(sessionID));
       building.set(sessionID, job);
@@ -971,6 +1019,7 @@ var src_default = Plugin.define({
         return;
       const state = await store.get(event.sessionID);
       state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => message.content)));
+      state.compactedMeasured = state.measuredPrompt;
       state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS;
       store.save(event.sessionID);
       if (on("T2"))
@@ -1035,6 +1084,12 @@ var src_default = Plugin.define({
       if (event.type === "session.deleted")
         return store.remove(sessionID);
       const state = await store.get(sessionID);
+      if (event.type === "session.step.ended") {
+        const prompt = promptTokens(data.tokens);
+        if (prompt !== undefined)
+          state.measuredPrompt = prompt;
+        return;
+      }
       if (event.type === "session.compaction.ended") {
         state.callsSinceCompaction = 0;
         store.save(sessionID);
@@ -1057,7 +1112,7 @@ var src_default = Plugin.define({
     (async () => {
       while (!abort.signal.aborted) {
         try {
-          for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
+          for await (const event of ctx.event.subscribe({ signal: abort.signal, types: [...EVENTS] })) {
             await handle(event).catch(() => {});
           }
         } catch {}
