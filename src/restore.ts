@@ -35,6 +35,8 @@ export interface Restoration extends Snapshot {
   sections: Record<string, number>
   /** What the restoration could use. */
   budget: number
+  /** The room the compaction freed, which the budget is a share of. */
+  room: number
   /** Files whose content or changes are shown, and files only listed by path, relative to the session's directory. */
   files: { restored: string[]; listed: string[] }
 }
@@ -44,10 +46,10 @@ export function windowOf(limit: { input?: number; context?: number } | undefined
   return limit?.input || limit?.context || fallback
 }
 
-/** The budget grows with the conversation that was compacted, within fixed bounds. */
-export function restoreBudget(compactedTokens: number | undefined, window: number) {
-  const fromConversation = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (compactedTokens ?? 0))
-  return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromConversation))
+/** The budget grows with the room the compaction freed, within fixed bounds. */
+export function restoreBudget(room: number | undefined, window: number) {
+  const fromRoom = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (room ?? 0))
+  return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromRoom))
 }
 
 /** Lines numbered the way OpenCode's read tool numbers them, starting at `first`. Very long lines are cut. */
@@ -76,7 +78,8 @@ const isPlan = (record: FileRecord) => record.path.startsWith(PLAN_DIR + path.se
 
 /**
  * Builds what goes back into the conversation after a compaction, read fresh from disk. `visible` is the text the
- * request already holds from the checkpoint on, so a user message OpenCode kept isn't repeated.
+ * request already holds from the checkpoint on, so a user message OpenCode kept isn't repeated. `base` is the size of
+ * that request without the restoration; the room the compaction freed is `state.compactedTokens` less `base`.
  * Returns undefined when there is nothing worth restoring.
  */
 export async function buildRestoration(
@@ -84,8 +87,10 @@ export async function buildRestoration(
   window: number,
   summaryKey: string,
   visible = "",
+  base = 0,
 ): Promise<Restoration | undefined> {
-  const total = restoreBudget(state.compactedTokens, window)
+  const room = Math.max(0, (state.compactedTokens ?? 0) - base)
+  const total = restoreBudget(room, window)
   let budget = total
   const sections: string[] = []
   const sizes: Record<string, number> = {}
@@ -124,7 +129,7 @@ export async function buildRestoration(
   // come back with what they returned. When OpenCode kept recent conversation itself, it isn't repeated.
   const work: string[] = []
   const keptRecent = /<recent-context>\s*\S/.test(visible)
-  const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(state.compactedTokens, budget))
+  const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(room, budget))
   if (steps.length > 0) {
     work.push(`Your last steps, oldest first, with what they returned:\n\n${steps.map(renderStep).join("\n\n")}`)
   } else if (state.calls?.length) {
@@ -239,6 +244,7 @@ export async function buildRestoration(
     summaryKey,
     sections: sizes,
     budget: total,
+    room,
     files: {
       restored: [...restored].map(relative),
       listed: sizes.others === undefined ? [] : others.map((record) => relative(record.path)),
@@ -246,9 +252,9 @@ export async function buildRestoration(
   }
 }
 
-/** How much of the restoration the latest steps may take: a share of the conversation that was compacted, within the rest. */
-function recentBudget(compactedTokens: number | undefined, left: number) {
-  return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * (compactedTokens ?? 0), left / 2))
+/** How much of the restoration the latest steps may take: a share of the room the compaction freed, within the rest. */
+function recentBudget(room: number, left: number) {
+  return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * room, left / 2))
 }
 
 /** The newest steps that fit the budget, oldest first. Reads are left out: the files come back from disk. */

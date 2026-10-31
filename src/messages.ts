@@ -1,6 +1,36 @@
 import type { Message } from "@opencode/ai/effect"
+import { estimateTokens } from "./tokens"
 
 const CHECKPOINT = "<conversation-checkpoint>"
+
+/** A request as OpenCode's `context` and `compaction` hooks pass it. */
+export interface RequestShape {
+  readonly system?: unknown
+  readonly tools?: unknown
+  readonly messages: readonly Message[]
+}
+
+/** An estimate of the messages' contents. */
+export function contentTokens(messages: readonly Message[]): number {
+  return estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
+}
+
+/** An estimate of the whole request: the system prompt, the tool definitions, and the messages. */
+export function requestTokens(request: RequestShape): number {
+  return estimateTokens(JSON.stringify(request.system ?? [])) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages)
+}
+
+/**
+ * The request's size the way OpenCode 2.2 sizes it to decide on compaction: the provider's count of the latest
+ * response's prompt, plus an estimate of that response and what came after it, which the count doesn't cover. Characters
+ * alone miss the system prompt's real size and overstate a conversation whose old reasoning the provider drops. Without
+ * a count, the whole request is estimated.
+ */
+export function promptSize(request: RequestShape, measured: number | undefined): number {
+  if (measured === undefined) return requestTokens(request)
+  const reply = request.messages.findLastIndex((message) => message.role === "assistant")
+  return measured + (reply < 0 ? 0 : contentTokens(request.messages.slice(reply)))
+}
 
 type Part = { readonly type: string; readonly [key: string]: unknown }
 

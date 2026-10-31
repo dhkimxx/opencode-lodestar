@@ -77,11 +77,11 @@ export interface SessionState {
   lean?: boolean
   /** When the agent's recent shell commands ran. A file that changed during one was changed by the agent. */
   shellRuns?: { start: number; end: number }[]
-  /** Estimated size of the conversation at the last compaction. */
+  /** Size of the prompt at the last compaction, taken the way OpenCode decides to compact (see `promptSize`). */
   compactedTokens?: number
-  /** The prompt the latest step sent, as the provider counted it. */
+  /** The prompt the latest step since the last compaction sent, as the provider counted it. */
   measuredPrompt?: number
-  /** `measuredPrompt` at the last compaction, to compare with `compactedTokens` in the evaluation trace. */
+  /** `measuredPrompt` at the last compaction, for the evaluation trace. */
   compactedMeasured?: number
   /** What gets put back after the last compaction. It stays fixed until the next one. */
   snapshot?: Snapshot

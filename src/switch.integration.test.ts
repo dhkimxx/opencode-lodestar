@@ -105,3 +105,52 @@ test("keeps its own notices out of what the model reads, whether on or off", asy
     expect(messages.map((message) => (message.content[0] as { text: string }).text)).toEqual(["fix the bug"])
   }
 })
+
+class HostMessage {
+  constructor(
+    readonly role: string,
+    readonly content: unknown,
+  ) {}
+  static user(text: string) {
+    return new HostMessage("user", [{ type: "text", text }])
+  }
+}
+
+test("puts into the compaction request only the restoration the request before it carried", async () => {
+  const h = host()
+  await plugin.setup(h.ctx as never)
+  await prompt(h)
+  await settle()
+  const request = () => ({
+    sessionID: "ses_1",
+    model: { providerID: "p", id: "m" },
+    system: [],
+    tools: {},
+    messages: [
+      HostMessage.user("<conversation-checkpoint>\n<summary>\nworking on the bug\n</summary>\n</conversation-checkpoint>"),
+      new HostMessage("assistant", [{ type: "text", text: "looking" }]),
+    ],
+  })
+  const restored = (event: ReturnType<typeof request>) =>
+    event.messages.some((message) => JSON.stringify(message.content).includes("<restored-context>"))
+
+  const step = request()
+  await h.hooks.get("session.context")!(step)
+  expect(restored(step)).toBe(true)
+  const compaction = request()
+  await h.hooks.get("session.compaction")!(compaction)
+  expect(restored(compaction)).toBe(true)
+
+  // Off for one request, so the provider's count of it holds no restoration. Back on, the compaction request gets none.
+  await h.run("off")
+  await h.hooks.get("session.context")!(request())
+  await h.run("on")
+  const after = request()
+  await h.hooks.get("session.compaction")!(after)
+  expect(restored(after)).toBe(false)
+  // The next request carries it again, and so does the compaction request after it.
+  await h.hooks.get("session.context")!(request())
+  const again = request()
+  await h.hooks.get("session.compaction")!(again)
+  expect(restored(again)).toBe(true)
+})

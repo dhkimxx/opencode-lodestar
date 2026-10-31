@@ -44,7 +44,7 @@ bun eval/run.ts --tasks eval/tasks-hard.json \
 | `--models` | `opencode-go/glm-5.3-flash#high` | Comma-separated models, with the reasoning variant after `#`. |
 | `--configs` | `A,B` | `A` is OpenCode alone, `B` is OpenCode with lodestar. `B-T2`, `B-T4`, and `B-T6` switch off one feature, to measure what it adds. `C` runs the lodestar checkout given by `--c-plugin`, to compare two versions. |
 | `--c-plugin` | | Another lodestar checkout, with a built `dist/`, for config `C`. |
-| `--compact-at` | | The harness compacts the session whenever a request reaches this many tokens, and OpenCode keeps its own threshold. Use this for new runs. |
+| `--compact-at` | | The harness compacts the session whenever a request reaches this many tokens, and OpenCode keeps its own threshold. |
 | `--threshold` | `50000` | Without `--compact-at`, OpenCode's own auto compaction starts at this many tokens. |
 | `--budget` | `50` | Minutes the agent gets. |
 | `--concurrency` | `3` | Runs at a time. Each container may use up to 6 GB of memory. |
@@ -53,12 +53,14 @@ bun eval/run.ts --tasks eval/tasks-hard.json \
 
 Compaction has to be forced early, because sessions on these tasks rarely grow anywhere near the models' windows of 272k to 1M tokens. At a realistic threshold, almost none would compact. There are two ways to force it.
 
-- **`--compact-at` is the better one.** OpenCode keeps its default threshold. The harness reads the size of each request from the agent's events and asks for a compaction when it reaches the given number.
+- **`--compact-at`** keeps OpenCode's default threshold. The harness reads the size of each request from the agent's events and asks for a compaction when it reaches the given number.
   - It checks every five seconds, so a compaction can come a step or two after the size is reached.
   - OpenCode then has room to send the compaction request as it is.
-- **`--threshold` lowers OpenCode's own threshold.** In OpenCode 2.0, OpenCode also caps its compaction request at that threshold, and it estimates the request's size at four characters per token. When the estimate doesn't fit, it rebuilds the history as plain text, which loses the prompt cache with or without lodestar. OpenCode 2.1 sizes the request by the model's window instead, so this no longer happens there.
+  - When the summary and what came back with it fill the limit by themselves, the harness asks again two steps later.
+- **`--threshold` lowers OpenCode's own threshold.** Use it with OpenCode 2.2 and newer: compactions then come from OpenCode's automatic path, at the size OpenCode measures, as they do for users. In OpenCode 2.0, OpenCode also caps its compaction request at that threshold, and it estimates the request's size at four characters per token. When the estimate doesn't fit, it rebuilds the history as plain text, which loses the prompt cache with or without lodestar. OpenCode 2.1 sizes the request by the model's window instead, so this no longer happens there.
   - At 40,000 tokens, this happened to 46% of DeepSeek V4.1 Flash's compactions.
   - The v0.3.0 results used `--compact-at 40000` instead, and no compaction request was rebuilt.
+  - OpenCode 2.2 sizes the compaction request by the provider's count of the request before it, so it is sent as it is.
 
 Each run reads its model's limits inside the container, with the run's own login, because they depend on it: through a ChatGPT login, OpenAI models accept less than through the API.
 

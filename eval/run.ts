@@ -242,13 +242,17 @@ class Sandbox {
 async function compactWhenFull(sandbox: Sandbox, limit: number, finished: () => boolean) {
   let asked = 0
   let waiting = false
+  let askedAt = 0
   while (!finished()) {
     await Bun.sleep(5_000)
     if (finished()) break
-    const last = await sandbox.exec(["sh", "-c", `grep '"step_finish"' ${STATE}/turn.jsonl 2>/dev/null | tail -n 1`])
+    const file = `${STATE}/turn.jsonl`
+    const last = await sandbox.exec(["sh", "-c", `grep -c '"step_finish"' ${file} 2>/dev/null; grep '"step_finish"' ${file} 2>/dev/null | tail -n 1`])
+    const [countLine = "", ...rest] = last.stdout.split("\n")
+    const steps = Number(countLine) || 0
     let event: { sessionID?: string; part?: { tokens?: { input: number; output: number; cache: { read: number; write: number } } } }
     try {
-      event = JSON.parse(last.stdout)
+      event = JSON.parse(rest.join("\n"))
     } catch {
       continue
     }
@@ -257,14 +261,17 @@ async function compactWhenFull(sandbox: Sandbox, limit: number, finished: () => 
     // The next request carries this one's prompt and its reply.
     const size = tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
     if (waiting) {
-      if (size < limit) waiting = false
-      continue
+      // A request under the limit shows the compaction happened. When the summary and what came back with it fill the
+      // limit by themselves, none comes; two more steps show it happened too, as OpenCode then compacts again.
+      if (size >= limit && steps < askedAt + 2) continue
+      waiting = false
     }
     if (size < limit) continue
     const compacted = await sandbox.opencode(["api", "--server", SERVER, "session.compact", "--param", `sessionID=${event.sessionID}`, "-d", "{}"])
     if (compacted.code === 0) {
       asked++
       waiting = true
+      askedAt = steps
     }
   }
   return asked

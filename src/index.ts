@@ -4,12 +4,12 @@ import { Plugin } from "@opencode/plugin"
 import { joinCopies } from "./copies"
 import { recordShellRun, recordTool, SHELL_TOOLS } from "./files"
 import { PROGRESS_NOTE_CHARS, PROGRESS_NOTES, QUICK_REPEAT_CALLS } from "./limits"
-import { checkpointIndex, insertNearEnd, removeNotices, textOf, userMessage } from "./messages"
+import { checkpointIndex, insertNearEnd, promptSize, removeNotices, requestTokens, textOf, userMessage, type RequestShape } from "./messages"
 import { recitation, staleFiles, staleNotice } from "./reminders"
 import { buildRestoration, describeRestoration, summaryFromCheckpoint, summaryKeyOf, windowOf } from "./restore"
 import { Store, type SessionState, type Snapshot } from "./state"
 import { configured, describe, parseAction, Switch, USAGE } from "./switch"
-import { estimateTokens, promptTokens } from "./tokens"
+import { promptTokens } from "./tokens"
 import { recordCall, recordRequest, recordText } from "./work"
 
 type Feature = "T2" | "T4" | "T6"
@@ -80,7 +80,7 @@ export default Plugin.define({
     // itself: OpenCode counts a message posted there as a new exchange, keeps the turn before it as serialized text in
     // the next checkpoint, and in evaluation that text led a model to break its own tool calls.
     const building = new Map<string, Promise<Snapshot | undefined>>()
-    function ensureSnapshot(sessionID: string, summary: string, visible: string, model: ModelRef | undefined) {
+    function ensureSnapshot(sessionID: string, summary: string, visible: string, model: ModelRef | undefined, size: () => number) {
       const running = building.get(sessionID)
       if (running) return running
       const job = (async () => {
@@ -89,7 +89,8 @@ export default Plugin.define({
         if (state.snapshot?.summaryKey === key) return state.snapshot
         await directoryOf(sessionID, state)
         const window = await contextWindow(model)
-        const restoration = await buildRestoration(state, window, key, visible)
+        const base = size()
+        const restoration = await buildRestoration(state, window, key, visible, base)
         state.snapshot = restoration
           ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) }
           : { text: "", tokens: 0, at: Date.now(), summaryKey: key }
@@ -102,6 +103,8 @@ export default Plugin.define({
           note: state.snapshot.note,
           sections: restoration?.sections,
           budget: restoration?.budget,
+          room: restoration?.room,
+          base,
           window,
           compactedTokens: state.compactedTokens,
           compactedMeasured: state.compactedMeasured,
@@ -115,17 +118,37 @@ export default Plugin.define({
       return job
     }
 
-    /** Puts the restoration right after the checkpoint, where it stays until the next compaction. */
-    async function restoreInto(sessionID: string, messages: Message[], model: ModelRef | undefined) {
+    /**
+     * Puts the restoration right after the checkpoint, where it stays until the next compaction. Returns the summary
+     * key of the restoration it put in, if any. With `only`, it puts in only an existing restoration with that key and
+     * never builds one.
+     */
+    async function restoreInto(sessionID: string, request: RequestShape & { readonly model?: ModelRef }, only?: string) {
+      const messages = request.messages as Message[]
       const index = checkpointIndex(messages)
       const checkpoint = messages[index]
-      if (!checkpoint) return
-      // What the request already shows from the checkpoint on, such as a user message OpenCode kept, isn't repeated.
-      const visible = messages.slice(index).map(textOf).join("\n")
-      const snapshot = await ensureSnapshot(sessionID, summaryFromCheckpoint(textOf(checkpoint)), visible, model)
+      if (!checkpoint) return undefined
+      const summary = summaryFromCheckpoint(textOf(checkpoint))
+      let snapshot: Snapshot | undefined
+      if (only !== undefined) {
+        const state = await store.get(sessionID)
+        if (summaryKeyOf(summary) !== only || state.snapshot?.summaryKey !== only) return undefined
+        snapshot = state.snapshot
+      } else {
+        // What the request already shows from the checkpoint on, such as a user message OpenCode kept, isn't repeated.
+        const visible = messages.slice(index).map(textOf).join("\n")
+        snapshot = await ensureSnapshot(sessionID, summary, visible, request.model, () => requestTokens(request))
+      }
       const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined
-      if (message) messages.splice(index + 1, 0, message)
+      if (!message || !snapshot) return undefined
+      messages.splice(index + 1, 0, message)
+      return snapshot.summaryKey
     }
+
+    // The summary key of the restoration each session's latest request carried. Only that restoration goes into the
+    // compaction request: OpenCode 2.2 sizes that request by the provider's count of the request before it, so anything
+    // the count doesn't include can push it past the window, and OpenCode then sends it again as plain text.
+    const carried = new Map<string, string>()
 
     // When each shell command started, so T6 can tell the agent's own changes, such as a formatter's, from outside ones.
     const shellStarts = new Map<string, number>()
@@ -182,12 +205,13 @@ export default Plugin.define({
         removeNotices(messages)
         if (!power.on) return
         const state = await store.get(event.sessionID)
-        state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
+        state.compactedTokens = promptSize(event, state.measuredPrompt)
         state.compactedMeasured = state.measuredPrompt
         // A compaction right after the previous one means the context refills fast, so the next restoration stays small.
         state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS
         store.save(event.sessionID)
-        if (on("T2")) await restoreInto(event.sessionID, messages, event.model)
+        const key = carried.get(event.sessionID)
+        if (on("T2") && key !== undefined) await restoreInto(event.sessionID, event, key)
       }),
     )
 
@@ -197,10 +221,14 @@ export default Plugin.define({
         if (!copy.leads()) return
         const messages = event.messages as Message[]
         removeNotices(messages)
+        carried.delete(event.sessionID)
         if (!power.on) return
         const state = await store.get(event.sessionID)
         let changed = false
-        if (on("T2")) await restoreInto(event.sessionID, messages, event.model)
+        if (on("T2")) {
+          const key = await restoreInto(event.sessionID, event)
+          if (key !== undefined) carried.set(event.sessionID, key)
+        }
         if (on("T6")) {
           const files = await staleFiles(state)
           const notice = staleNotice(state, files)
@@ -248,16 +276,21 @@ export default Plugin.define({
       const data = event.data ?? {}
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
       if (!sessionID) return
-      if (event.type === "session.deleted") return store.remove(sessionID)
+      if (event.type === "session.deleted") {
+        carried.delete(sessionID)
+        return store.remove(sessionID)
+      }
       const state = await store.get(sessionID)
       if (event.type === "session.step.ended") {
-        // Kept in memory for the evaluation trace only; nothing lodestar restores depends on it.
+        // The size of the next compaction is taken from it, as OpenCode takes it.
         const prompt = promptTokens(data.tokens)
         if (prompt !== undefined) state.measuredPrompt = prompt
         return
       }
       if (event.type === "session.compaction.ended") {
         state.callsSinceCompaction = 0
+        // A count from before the compaction says nothing about the next one.
+        state.measuredPrompt = undefined
         store.save(sessionID)
       }
       if (event.type === "session.text.ended" && typeof data.text === "string" && data.text.trim()) {

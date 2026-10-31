@@ -38,14 +38,17 @@ export const RESTORE_SKILL_TOKENS = 5_000
 export const RESTORE_SKILLS_TOTAL = 25_000
 export const RESTORE_PLAN_TOKENS = 5_000
 /**
- * Restoration may use this share of the context that was compacted, and of the model's window. The floor only keeps
- * room for the request and the latest steps: a larger one took a quarter of a 40,000-token conversation, and the next
- * compaction came sooner.
+ * Restoration may use this share of the room a compaction freed, and of the model's window. The room is the prompt
+ * OpenCode compacted less what the first request after it already carries: system prompt, tools, summary, and the
+ * conversation OpenCode kept. Everything restored stays in the prompt until the next compaction, so it is taken from
+ * that room. In evaluation, restoration at about 17% of the room led to fewer compactions, and at about 28% to twice as
+ * many. The floor only keeps room for the request and the latest steps: a larger one took a quarter of a 40,000-token
+ * conversation, and the next compaction came sooner.
  */
 export const RESTORE_SHARE = 0.2
 export const RESTORE_MIN_TOKENS = 3_000
 export const RESTORE_MAX_TOKENS = 40_000
-/** The agent's latest steps, word for word, may use up to this share of the context that was compacted. */
+/** The agent's latest steps, word for word, may use up to this share of the room a compaction freed. */
 export const RESTORE_RECENT_SHARE = 0.1
 export const RESTORE_RECENT_TOKENS = 20_000
 /** The agent's latest steps kept for that, in characters, and the most kept from one step's output. */

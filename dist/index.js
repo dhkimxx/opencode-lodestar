@@ -185,8 +185,45 @@ async function recordTool(state, input) {
   return touched.read.length + touched.edited.length > 0;
 }
 
+// src/tokens.ts
+var estimateTokens = (text) => Math.ceil(text.length / 4);
+function keepStart(text, tokens) {
+  const limit = tokens * 4;
+  return text.length <= limit ? text : `${text.slice(0, limit)}
+[\u2026 cut to about ${tokens} tokens]`;
+}
+function keepEnds(text, tokens) {
+  const limit = tokens * 4;
+  if (text.length <= limit)
+    return text;
+  const half = Math.floor(limit / 2);
+  return `${text.slice(0, half)}
+[\u2026 about ${estimateTokens(text.slice(half, -half))} tokens left out \u2026]
+${text.slice(-half)}`;
+}
+function promptTokens(tokens) {
+  const usage = tokens;
+  if (typeof usage?.input !== "number")
+    return;
+  const read = typeof usage.cache?.read === "number" ? usage.cache.read : 0;
+  const write = typeof usage.cache?.write === "number" ? usage.cache.write : 0;
+  return usage.input + read + write;
+}
+
 // src/messages.ts
 var CHECKPOINT = "<conversation-checkpoint>";
+function contentTokens(messages) {
+  return estimateTokens(JSON.stringify(messages.map((message) => message.content)));
+}
+function requestTokens(request) {
+  return estimateTokens(JSON.stringify(request.system ?? [])) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages);
+}
+function promptSize(request, measured) {
+  if (measured === undefined)
+    return requestTokens(request);
+  const reply = request.messages.findLastIndex((message) => message.role === "assistant");
+  return measured + (reply < 0 ? 0 : contentTokens(request.messages.slice(reply)));
+}
 function parts(message) {
   const content = message.content;
   if (typeof content === "string")
@@ -331,39 +368,14 @@ async function changesOf(directory, files, context) {
   return { diffs, status };
 }
 
-// src/tokens.ts
-var estimateTokens = (text) => Math.ceil(text.length / 4);
-function keepStart(text, tokens) {
-  const limit = tokens * 4;
-  return text.length <= limit ? text : `${text.slice(0, limit)}
-[\u2026 cut to about ${tokens} tokens]`;
-}
-function keepEnds(text, tokens) {
-  const limit = tokens * 4;
-  if (text.length <= limit)
-    return text;
-  const half = Math.floor(limit / 2);
-  return `${text.slice(0, half)}
-[\u2026 about ${estimateTokens(text.slice(half, -half))} tokens left out \u2026]
-${text.slice(-half)}`;
-}
-function promptTokens(tokens) {
-  const usage = tokens;
-  if (typeof usage?.input !== "number")
-    return;
-  const read = typeof usage.cache?.read === "number" ? usage.cache.read : 0;
-  const write = typeof usage.cache?.write === "number" ? usage.cache.write : 0;
-  return usage.input + read + write;
-}
-
 // src/restore.ts
 var PLAN_DIR = path4.join(homedir(), ".opencode", "plan");
 function windowOf(limit, fallback) {
   return limit?.input || limit?.context || fallback;
 }
-function restoreBudget(compactedTokens, window) {
-  const fromConversation = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (compactedTokens ?? 0));
-  return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromConversation));
+function restoreBudget(room, window) {
+  const fromRoom = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (room ?? 0));
+  return Math.floor(Math.min(RESTORE_MAX_TOKENS, RESTORE_SHARE * window, fromRoom));
 }
 var numbered = (lines, first = 1) => lines.map((line, index) => `${first + index}: ${line.length > RESTORE_LINE_CHARS ? `${line.slice(0, RESTORE_LINE_CHARS)}\u2026` : line}`).join(`
 `);
@@ -379,8 +391,9 @@ ${fence}`;
 }
 var normalize = (text) => text.replace(/\s+/g, " ").trim();
 var isPlan = (record) => record.path.startsWith(PLAN_DIR + path4.sep);
-async function buildRestoration(state, window, summaryKey, visible = "") {
-  const total = restoreBudget(state.compactedTokens, window);
+async function buildRestoration(state, window, summaryKey, visible = "", base = 0) {
+  const room = Math.max(0, (state.compactedTokens ?? 0) - base);
+  const total = restoreBudget(room, window);
   let budget = total;
   const sections = [];
   const sizes = {};
@@ -420,7 +433,7 @@ ${parts.join(`
 `)}`);
   const work = [];
   const keptRecent = /<recent-context>\s*\S/.test(visible);
-  const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(state.compactedTokens, budget));
+  const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(room, budget));
   if (steps.length > 0) {
     work.push(`Your last steps, oldest first, with what they returned:
 
@@ -569,14 +582,15 @@ ${skillSections.join(`
     summaryKey,
     sections: sizes,
     budget: total,
+    room,
     files: {
       restored: [...restored].map(relative),
       listed: sizes.others === undefined ? [] : others.map((record) => relative(record.path))
     }
   };
 }
-function recentBudget(compactedTokens, left) {
-  return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * (compactedTokens ?? 0), left / 2));
+function recentBudget(room, left) {
+  return Math.floor(Math.min(RESTORE_RECENT_TOKENS, RESTORE_RECENT_SHARE * room, left / 2));
 }
 function latestSteps(recent, budget) {
   const chosen = [];
@@ -929,7 +943,7 @@ var src_default = Plugin.define({
       return state.directory ?? process.cwd();
     }
     const building = new Map;
-    function ensureSnapshot(sessionID, summary, visible, model) {
+    function ensureSnapshot(sessionID, summary, visible, model, size) {
       const running = building.get(sessionID);
       if (running)
         return running;
@@ -940,7 +954,8 @@ var src_default = Plugin.define({
           return state.snapshot;
         await directoryOf(sessionID, state);
         const window = await contextWindow(model);
-        const restoration = await buildRestoration(state, window, key, visible);
+        const base = size();
+        const restoration = await buildRestoration(state, window, key, visible, base);
         state.snapshot = restoration ? { text: restoration.text, tokens: restoration.tokens, at: restoration.at, summaryKey: key, note: describeRestoration(restoration) } : { text: "", tokens: 0, at: Date.now(), summaryKey: key };
         store.save(sessionID);
         trace({
@@ -951,6 +966,8 @@ var src_default = Plugin.define({
           note: state.snapshot.note,
           sections: restoration?.sections,
           budget: restoration?.budget,
+          room: restoration?.room,
+          base,
           window,
           compactedTokens: state.compactedTokens,
           compactedMeasured: state.compactedMeasured,
@@ -963,18 +980,31 @@ var src_default = Plugin.define({
       building.set(sessionID, job);
       return job;
     }
-    async function restoreInto(sessionID, messages, model) {
+    async function restoreInto(sessionID, request, only) {
+      const messages = request.messages;
       const index = checkpointIndex(messages);
       const checkpoint = messages[index];
       if (!checkpoint)
         return;
-      const visible = messages.slice(index).map(textOf).join(`
+      const summary = summaryFromCheckpoint(textOf(checkpoint));
+      let snapshot;
+      if (only !== undefined) {
+        const state = await store.get(sessionID);
+        if (summaryKeyOf(summary) !== only || state.snapshot?.summaryKey !== only)
+          return;
+        snapshot = state.snapshot;
+      } else {
+        const visible = messages.slice(index).map(textOf).join(`
 `);
-      const snapshot = await ensureSnapshot(sessionID, summaryFromCheckpoint(textOf(checkpoint)), visible, model);
+        snapshot = await ensureSnapshot(sessionID, summary, visible, request.model, () => requestTokens(request));
+      }
       const message = snapshot?.text ? userMessage(messages, snapshot.text) : undefined;
-      if (message)
-        messages.splice(index + 1, 0, message);
+      if (!message || !snapshot)
+        return;
+      messages.splice(index + 1, 0, message);
+      return snapshot.summaryKey;
     }
+    const carried = new Map;
     const shellStarts = new Map;
     registrations.push(await ctx.tool.hook("execute.before", async (event) => {
       if (!active())
@@ -1018,24 +1048,29 @@ var src_default = Plugin.define({
       if (!power.on)
         return;
       const state = await store.get(event.sessionID);
-      state.compactedTokens = estimateTokens(JSON.stringify(messages.map((message) => message.content)));
+      state.compactedTokens = promptSize(event, state.measuredPrompt);
       state.compactedMeasured = state.measuredPrompt;
       state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS;
       store.save(event.sessionID);
-      if (on("T2"))
-        await restoreInto(event.sessionID, messages, event.model);
+      const key = carried.get(event.sessionID);
+      if (on("T2") && key !== undefined)
+        await restoreInto(event.sessionID, event, key);
     }));
     registrations.push(await ctx.session.hook("context", async (event) => {
       if (!copy.leads())
         return;
       const messages = event.messages;
       removeNotices(messages);
+      carried.delete(event.sessionID);
       if (!power.on)
         return;
       const state = await store.get(event.sessionID);
       let changed = false;
-      if (on("T2"))
-        await restoreInto(event.sessionID, messages, event.model);
+      if (on("T2")) {
+        const key = await restoreInto(event.sessionID, event);
+        if (key !== undefined)
+          carried.set(event.sessionID, key);
+      }
       if (on("T6")) {
         const files = await staleFiles(state);
         const notice = staleNotice(state, files);
@@ -1081,8 +1116,10 @@ var src_default = Plugin.define({
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined;
       if (!sessionID)
         return;
-      if (event.type === "session.deleted")
+      if (event.type === "session.deleted") {
+        carried.delete(sessionID);
         return store.remove(sessionID);
+      }
       const state = await store.get(sessionID);
       if (event.type === "session.step.ended") {
         const prompt = promptTokens(data.tokens);
@@ -1092,6 +1129,7 @@ var src_default = Plugin.define({
       }
       if (event.type === "session.compaction.ended") {
         state.callsSinceCompaction = 0;
+        state.measuredPrompt = undefined;
         store.save(sessionID);
       }
       if (event.type === "session.text.ended" && typeof data.text === "string" && data.text.trim()) {

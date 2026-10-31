@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { Message } from "@opencode/ai/effect"
 import { touchedFiles } from "./files"
-import { checkpointIndex, insertNearEnd, removeNotices, textOf, userMessage } from "./messages"
+import { checkpointIndex, contentTokens, insertNearEnd, promptSize, removeNotices, requestTokens, textOf, userMessage } from "./messages"
 
 class FakeMessage {
   constructor(
@@ -13,6 +13,19 @@ class FakeMessage {
   }
 }
 const fake = (role: string, text: string) => new FakeMessage(role, [{ type: "text", text }]) as unknown as Message
+
+test("sizes a request the way OpenCode decides to compact", () => {
+  const system = [{ type: "text", text: "s".repeat(4_000) }]
+  const tools = { read: { description: "d".repeat(2_000), input: {} } }
+  const messages = [fake("user", "u".repeat(8_000)), fake("assistant", "a".repeat(400)), fake("tool", "t".repeat(4_000))]
+  const request = { system, tools, messages }
+  // Without a count, everything is estimated, the system prompt and the tools included.
+  expect(requestTokens(request)).toBeGreaterThan(contentTokens(messages) + 1_400)
+  expect(promptSize(request, undefined)).toBe(requestTokens(request))
+  // With one, only the latest response and what came after it are estimated on top.
+  expect(promptSize(request, 30_000)).toBe(30_000 + contentTokens(messages.slice(1)))
+  expect(promptSize({ messages: [fake("user", "hi")] }, 30_000)).toBe(30_000)
+})
 
 test("finds the latest checkpoint", () => {
   const messages = [fake("user", "<conversation-checkpoint>\nold"), fake("assistant", "hi"), fake("user", "<conversation-checkpoint>\nnew")]

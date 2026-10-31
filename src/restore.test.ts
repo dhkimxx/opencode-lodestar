@@ -49,6 +49,21 @@ describe("restoreBudget", () => {
     expect(restoreBudget(900_000, 1_000_000)).toBe(40_000)
     expect(restoreBudget(900_000, 100_000)).toBe(20_000)
   })
+
+  test("is a share of the room the compaction freed, not of the whole prompt", async () => {
+    const session = state()
+    session.requests = ["fix the bug"]
+    session.compactedTokens = 60_000
+    const whole = await buildRestoration(session, 1_000_000, "key")
+    expect(whole?.room).toBe(60_000)
+    expect(whole?.budget).toBe(12_000)
+    // The request after the compaction already carries 20,000 tokens of system prompt, tools, and summary.
+    const after = await buildRestoration(session, 1_000_000, "key", "", 20_000)
+    expect(after?.room).toBe(40_000)
+    expect(after?.budget).toBe(8_000)
+    // A request after the compaction as large as the one compacted leaves only the floor.
+    expect((await buildRestoration(session, 1_000_000, "key", "", 70_000))?.budget).toBe(3_000)
+  })
 })
 
 describe("windowOf", () => {
