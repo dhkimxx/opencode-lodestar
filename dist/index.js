@@ -218,11 +218,13 @@ function contentTokens(messages) {
 function requestTokens(request) {
   return estimateTokens(JSON.stringify(request.system ?? [])) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages);
 }
-function promptSize(request, measured) {
+function promptSize(request, measured, measuredID) {
   if (measured === undefined)
     return requestTokens(request);
-  const reply = request.messages.findLastIndex((message) => message.role === "assistant");
-  return measured + (reply < 0 ? 0 : contentTokens(request.messages.slice(reply)));
+  const messages = request.messages;
+  const counted = measuredID === undefined ? -1 : messages.findIndex((message) => message.id === measuredID);
+  const reply = counted >= 0 ? counted : messages.findLastIndex((message) => message.role === "assistant");
+  return measured + (reply < 0 ? 0 : contentTokens(messages.slice(reply)));
 }
 function parts(message) {
   const content = message.content;
@@ -1048,7 +1050,7 @@ var src_default = Plugin.define({
       if (!power.on)
         return;
       const state = await store.get(event.sessionID);
-      state.compactedTokens = promptSize(event, state.measuredPrompt);
+      state.compactedTokens = promptSize(event, state.measuredPrompt, state.measuredMessage);
       state.compactedMeasured = state.measuredPrompt;
       state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS;
       store.save(event.sessionID);
@@ -1123,13 +1125,16 @@ var src_default = Plugin.define({
       const state = await store.get(sessionID);
       if (event.type === "session.step.ended") {
         const prompt = promptTokens(data.tokens);
-        if (prompt !== undefined)
+        if (prompt !== undefined) {
           state.measuredPrompt = prompt;
+          state.measuredMessage = typeof data.assistantMessageID === "string" ? data.assistantMessageID : undefined;
+        }
         return;
       }
       if (event.type === "session.compaction.ended") {
         state.callsSinceCompaction = 0;
         state.measuredPrompt = undefined;
+        state.measuredMessage = undefined;
         store.save(sessionID);
       }
       if (event.type === "session.text.ended" && typeof data.text === "string" && data.text.trim()) {

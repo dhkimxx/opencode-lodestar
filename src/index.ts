@@ -205,7 +205,7 @@ export default Plugin.define({
         removeNotices(messages)
         if (!power.on) return
         const state = await store.get(event.sessionID)
-        state.compactedTokens = promptSize(event, state.measuredPrompt)
+        state.compactedTokens = promptSize(event, state.measuredPrompt, state.measuredMessage)
         state.compactedMeasured = state.measuredPrompt
         // A compaction right after the previous one means the context refills fast, so the next restoration stays small.
         state.lean = !!state.snapshot && (state.callsSinceCompaction ?? Number.POSITIVE_INFINITY) <= QUICK_REPEAT_CALLS
@@ -284,13 +284,17 @@ export default Plugin.define({
       if (event.type === "session.step.ended") {
         // The size of the next compaction is taken from it, as OpenCode takes it.
         const prompt = promptTokens(data.tokens)
-        if (prompt !== undefined) state.measuredPrompt = prompt
+        if (prompt !== undefined) {
+          state.measuredPrompt = prompt
+          state.measuredMessage = typeof data.assistantMessageID === "string" ? data.assistantMessageID : undefined
+        }
         return
       }
       if (event.type === "session.compaction.ended") {
         state.callsSinceCompaction = 0
         // A count from before the compaction says nothing about the next one.
         state.measuredPrompt = undefined
+        state.measuredMessage = undefined
         store.save(sessionID)
       }
       if (event.type === "session.text.ended" && typeof data.text === "string" && data.text.trim()) {

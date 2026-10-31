@@ -81,6 +81,8 @@ export interface SessionState {
   compactedTokens?: number
   /** The prompt the latest step since the last compaction sent, as the provider counted it. */
   measuredPrompt?: number
+  /** The response `measuredPrompt` came with. */
+  measuredMessage?: string
   /** `measuredPrompt` at the last compaction, for the evaluation trace. */
   compactedMeasured?: number
   /** What gets put back after the last compaction. It stays fixed until the next one. */

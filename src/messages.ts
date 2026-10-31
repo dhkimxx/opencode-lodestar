@@ -24,12 +24,15 @@ export function requestTokens(request: RequestShape): number {
  * The request's size the way OpenCode 2.2 sizes it to decide on compaction: the provider's count of the latest
  * response's prompt, plus an estimate of that response and what came after it, which the count doesn't cover. Characters
  * alone miss the system prompt's real size and overstate a conversation whose old reasoning the provider drops. Without
- * a count, the whole request is estimated.
+ * a count, the whole request is estimated. `measuredID` is the response the count came with: its event can arrive after
+ * the next step has ended, and the estimate then starts from that response, not from the latest one.
  */
-export function promptSize(request: RequestShape, measured: number | undefined): number {
+export function promptSize(request: RequestShape, measured: number | undefined, measuredID?: string): number {
   if (measured === undefined) return requestTokens(request)
-  const reply = request.messages.findLastIndex((message) => message.role === "assistant")
-  return measured + (reply < 0 ? 0 : contentTokens(request.messages.slice(reply)))
+  const messages = request.messages
+  const counted = measuredID === undefined ? -1 : messages.findIndex((message) => (message as { id?: unknown }).id === measuredID)
+  const reply = counted >= 0 ? counted : messages.findLastIndex((message) => message.role === "assistant")
+  return measured + (reply < 0 ? 0 : contentTokens(messages.slice(reply)))
 }
 
 type Part = { readonly type: string; readonly [key: string]: unknown }

@@ -27,6 +27,22 @@ test("sizes a request the way OpenCode decides to compact", () => {
   expect(promptSize({ messages: [fake("user", "hi")] }, 30_000)).toBe(30_000)
 })
 
+test("adds to a late count from the response it came with", () => {
+  const withID = (id: string, role: string, text: string) => Object.assign(fake(role, text), { id })
+  const messages = [
+    withID("u1", "user", "u".repeat(800)),
+    withID("a1", "assistant", "a".repeat(400)),
+    withID("a1", "tool", "t".repeat(4_000)),
+    withID("a2", "assistant", "b".repeat(400)),
+    withID("a2", "tool", "r".repeat(40_000)),
+  ]
+  // The count for a2 hasn't arrived yet: what came after a1 is estimated, a2's large result included.
+  expect(promptSize({ messages }, 20_000, "a1")).toBe(20_000 + contentTokens(messages.slice(1)))
+  expect(promptSize({ messages }, 30_000, "a2")).toBe(30_000 + contentTokens(messages.slice(3)))
+  // A response no longer in the request falls back to the latest one.
+  expect(promptSize({ messages }, 30_000, "gone")).toBe(30_000 + contentTokens(messages.slice(3)))
+})
+
 test("finds the latest checkpoint", () => {
   const messages = [fake("user", "<conversation-checkpoint>\nold"), fake("assistant", "hi"), fake("user", "<conversation-checkpoint>\nnew")]
   expect(checkpointIndex(messages)).toBe(2)
