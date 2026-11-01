@@ -11,6 +11,17 @@ Each run follows the benchmark's own protocol:
 
 Results are in `results/`, one file for each version and model: [v0.3.0 with DeepSeek V4.1 Flash](results/v0.3.0-deepseek-v4.1-flash.md) and [v0.4.1 with GPT-6 Luna](results/v0.4.1-gpt-6-luna.md).
 
+## Smoke test
+
+`bun run smoke` checks lodestar against a real OpenCode in about ten seconds, with no model provider and no tokens spent. Run it first when OpenCode releases a new version, and before a release.
+
+- A local server plays the model. It reads and edits files in a throwaway project by a fixed script, answers OpenCode's summary requests with a summary, and records every request.
+- OpenCode runs in throwaway folders with lodestar from this checkout, and compacts at 30,000 tokens. Requests to anything but the local server are refused.
+- The checks read the recorded requests and lodestar's trace: the restoration sits right after each checkpoint and stays the same until the next one; it holds the request word for word, the changed files, and the code the agent read; each compaction request repeats the request before it, so the cache covers it, and is sent as messages rather than flattened to text; and each budget follows the provider's count.
+- `--opencode <binary>` picks the OpenCode to test, `--plugin <checkout>` another lodestar checkout, and `--keep` keeps the throwaway folders.
+
+It shows that lodestar and OpenCode still fit together, not whether agents do better. That takes the runs below.
+
 ## Setup
 
 1. Docker, and ripgrep at `~/.cache/opencode/bin/rg`. OpenCode downloads ripgrep the first time it searches.

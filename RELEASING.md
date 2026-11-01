@@ -22,7 +22,7 @@
 ## Steps
 
 1. Update `version` in `package.json` and add a section for it to `CHANGELOG.md`.
-2. Run `bun run check` and commit the rebuilt `dist/` with the version change, for example `Release v0.2.0`.
+2. Run `bun run check` and `bun run smoke`, and commit the rebuilt `dist/` with the version change, for example `Release v0.2.0`.
 3. Tag and push:
 
    ```sh

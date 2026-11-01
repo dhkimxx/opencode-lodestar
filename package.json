@@ -30,6 +30,7 @@
     "bundle": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "smoke": "bun eval/smoke.ts",
     "check": "bun run typecheck && bun run test && bun run bundle"
   },
   "publishConfig": {
