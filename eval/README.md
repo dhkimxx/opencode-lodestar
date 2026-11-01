@@ -20,6 +20,8 @@ Results are in `results/`, one file for each version and model: [v0.3.0 with Dee
 - The checks read the recorded requests and lodestar's trace: the restoration sits right after each checkpoint and stays the same until the next one; it holds the request word for word, the changed files, and the code the agent read; each compaction request repeats the request before it, so the cache covers it, and is sent as messages rather than flattened to text; and each budget follows the provider's count.
 - `--opencode <binary>` picks the OpenCode to test, `--plugin <checkout>` another lodestar checkout, and `--keep` keeps the throwaway folders.
 
+CI runs it on every push with the OpenCode version lodestar was tested with (`OPENCODE_TESTED` in `.github/workflows/ci.yml`), and every Monday with the newest OpenCode, opening an issue when that fails.
+
 It shows that lodestar and OpenCode still fit together, not whether agents do better. That takes the runs below.
 
 ## Setup

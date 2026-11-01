@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # The OpenCode version lodestar was tested with, as in the README.
+  OPENCODE_TESTED: 2.2.5
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -23,3 +27,16 @@ jobs:
       - run: bun run bundle
       - name: Check that dist/ is up to date
         run: git diff --exit-code -- dist
+
+  # lodestar in a real OpenCode, against a scripted model: no provider, no tokens. See eval/README.md.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Install OpenCode
+        run: curl -fsSL https://opencode.ai/v2/install | bash -s -- --version "$OPENCODE_TESTED" --no-modify-path
+      - run: bun eval/smoke.ts --opencode "$HOME/.opencode/bin/opencode"
