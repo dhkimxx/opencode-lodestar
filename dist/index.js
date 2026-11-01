@@ -215,8 +215,16 @@ var CHECKPOINT = "<conversation-checkpoint>";
 function contentTokens(messages) {
   return estimateTokens(JSON.stringify(messages.map((message) => message.content)));
 }
+function systemTokens(system) {
+  if (!Array.isArray(system))
+    return estimateTokens(JSON.stringify(system ?? []));
+  return system.reduce((sum, part) => {
+    const text = part?.text;
+    return sum + (typeof text === "string" ? estimateTokens(text) : estimateTokens(JSON.stringify(part ?? "")));
+  }, 0);
+}
 function requestTokens(request) {
-  return estimateTokens(JSON.stringify(request.system ?? [])) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages);
+  return systemTokens(request.system) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages);
 }
 function promptSize(request, measured, measuredID) {
   if (measured === undefined)
@@ -373,7 +381,9 @@ async function changesOf(directory, files, context) {
 // src/restore.ts
 var PLAN_DIR = path4.join(homedir(), ".opencode", "plan");
 function windowOf(limit, fallback) {
-  return limit?.input || limit?.context || fallback;
+  const input = limit?.input || 0;
+  const context = limit?.context || 0;
+  return (input && context ? Math.min(input, context) : input || context) || fallback;
 }
 function restoreBudget(room, window) {
   const fromRoom = Math.max(RESTORE_MIN_TOKENS, RESTORE_SHARE * (room ?? 0));

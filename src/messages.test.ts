@@ -27,6 +27,16 @@ test("sizes a request the way OpenCode decides to compact", () => {
   expect(promptSize({ messages: [fake("user", "hi")] }, 30_000)).toBe(30_000)
 })
 
+test("counts the instructions once, not again from their metadata", () => {
+  const text = "i".repeat(8_000)
+  const plain = requestTokens({ system: [{ type: "text", text }], messages: [] })
+  const tagged = requestTokens({
+    system: [{ type: "text", text, metadata: { experimental: { instructions: [{ key: "AGENTS.md", text }] } } }],
+    messages: [],
+  })
+  expect(tagged).toBe(plain)
+})
+
 test("adds to a late count from the response it came with", () => {
   const withID = (id: string, role: string, text: string) => Object.assign(fake(role, text), { id })
   const messages = [

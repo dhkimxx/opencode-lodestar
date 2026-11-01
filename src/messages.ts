@@ -15,9 +15,21 @@ export function contentTokens(messages: readonly Message[]): number {
   return estimateTokens(JSON.stringify(messages.map((message) => (message as { content?: unknown }).content)))
 }
 
+/**
+ * An estimate of the system prompt from its text only. Since OpenCode 2.2.5 the instructions part also carries each
+ * source's text in its metadata, which the model never sees.
+ */
+function systemTokens(system: unknown): number {
+  if (!Array.isArray(system)) return estimateTokens(JSON.stringify(system ?? []))
+  return system.reduce((sum: number, part) => {
+    const text = (part as { text?: unknown } | undefined)?.text
+    return sum + (typeof text === "string" ? estimateTokens(text) : estimateTokens(JSON.stringify(part ?? "")))
+  }, 0)
+}
+
 /** An estimate of the whole request: the system prompt, the tool definitions, and the messages. */
 export function requestTokens(request: RequestShape): number {
-  return estimateTokens(JSON.stringify(request.system ?? [])) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages)
+  return systemTokens(request.system) + estimateTokens(JSON.stringify(request.tools ?? {})) + contentTokens(request.messages)
 }
 
 /**

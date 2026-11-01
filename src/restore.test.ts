@@ -69,6 +69,9 @@ describe("restoreBudget", () => {
 describe("windowOf", () => {
   test("takes the input limit when the model has one, as OpenCode does", () => {
     expect(windowOf({ context: 400_000, input: 272_000 }, 200_000)).toBe(272_000)
+    // An input limit above the window can't be used in full: the window also holds the reply.
+    expect(windowOf({ context: 200_000, input: 400_000 }, 1_000_000)).toBe(200_000)
+    expect(windowOf({ input: 128_000 }, 200_000)).toBe(128_000)
     expect(windowOf({ context: 1_000_000 }, 200_000)).toBe(1_000_000)
     expect(windowOf({ context: 0, input: 0 }, 200_000)).toBe(200_000)
     expect(windowOf(undefined, 200_000)).toBe(200_000)

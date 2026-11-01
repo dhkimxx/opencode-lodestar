@@ -41,9 +41,14 @@ export interface Restoration extends Snapshot {
   files: { restored: string[]; listed: string[] }
 }
 
-/** The prompt limit OpenCode compacts against: the model's input limit when it has one, otherwise its window. */
+/**
+ * The prompt limit OpenCode compacts against: the model's input limit or its window, the smaller when it has both,
+ * since the window also holds the reply.
+ */
 export function windowOf(limit: { input?: number; context?: number } | undefined, fallback: number) {
-  return limit?.input || limit?.context || fallback
+  const input = limit?.input || 0
+  const context = limit?.context || 0
+  return (input && context ? Math.min(input, context) : input || context) || fallback
 }
 
 /** The budget grows with the room the compaction freed, within fixed bounds. */
