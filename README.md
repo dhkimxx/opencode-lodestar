@@ -129,7 +129,7 @@ In 3 of the 28 pairs only lodestar resolved the task, and in 1 only OpenCode alo
 
 ### GPT-6 Luna
 
-22 task pairs, at reasoning effort `high`, with OpenCode 2.2.5.
+22 task pairs, at reasoning effort `high`, with lodestar v0.4.1 and OpenCode 2.2.5.
 
 | Per run, over 22 pairs | OpenCode alone | With lodestar |
 | --- | --- | --- |
