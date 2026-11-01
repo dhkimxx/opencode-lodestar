@@ -79,6 +79,35 @@ describe("windowOf", () => {
 })
 
 describe("restored and listed files", () => {
+  const wide = (count: number) => Array.from({ length: count }, (_, index) => `line ${index + 1} ${"x".repeat(44)}`).join("\n") + "\n"
+
+  test("when the code doesn't all fit, the newest files come back and the rest are listed, not lost", async () => {
+    const session = state()
+    const names: string[] = []
+    for (let index = 0; index < 3; index++) {
+      const name = await file(`wide${index}.ts`, wide(80))
+      await read(session, name, 10 + index, [1, 80])
+      names.push(name)
+    }
+    // No compacted size: the floor of 3,000 tokens, too little for three files of about 1,100 tokens each.
+    const restoration = await buildRestoration(session, 1_000_000, "key")
+    expect(restoration?.files.restored.sort()).toEqual(["wide1.ts", "wide2.ts"])
+    expect(restoration?.files.listed).toEqual(["wide0.ts"])
+    expect(restoration?.text).toContain("## Code you were reading")
+  })
+
+  test("stays within its budget, the fixed text around the sections included", async () => {
+    const session = state()
+    // A request that fills the floor of 3,000 tokens by itself keeps its start and end instead of being left out.
+    session.requests = ["r".repeat(11_800)]
+    await edit(session, await file("changed.ts", "export const a = 1\n"), 5)
+    const restoration = await buildRestoration(session, 1_000_000, "key")
+    expect(restoration).toBeDefined()
+    expect(restoration!.text).toContain("## Your task")
+    expect(restoration!.text).toContain("tokens left out")
+    expect(restoration!.tokens).toBeLessThanOrEqual(restoration!.budget)
+  })
+
   test("says the code needn't be read again only when some came back", async () => {
     const listedOnly = state()
     listedOnly.requests = ["x".repeat(11_000)]

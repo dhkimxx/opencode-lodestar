@@ -403,10 +403,19 @@ ${fence}`;
 }
 var normalize = (text) => text.replace(/\s+/g, " ").trim();
 var isPlan = (record) => record.path.startsWith(PLAN_DIR + path4.sep);
+var OPENING = "<restored-context>";
+var CARRY_ON = "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more.";
+var FROM_DISK = " The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change.";
+var NOT_EVERYTHING = "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.";
+var BEFORE_FINISHING = ["", "Before you finish:", "- Check your changes against each point of the user's request.", "- Run the tests that cover your changes."];
+var CLOSING = "</restored-context>";
 async function buildRestoration(state, window, summaryKey, visible = "", base = 0) {
   const room = Math.max(0, (state.compactedTokens ?? 0) - base);
   const total = restoreBudget(room, window);
-  let budget = total;
+  const anyEdited = Object.values(state.files).some((record) => record.editedAt && !isPlan(record));
+  const frame = [OPENING, CARRY_ON + FROM_DISK, NOT_EVERYTHING, "", "", ...anyEdited ? BEFORE_FINISHING : [], CLOSING].join(`
+`);
+  let budget = total - estimateTokens(frame);
   const sections = [];
   const sizes = {};
   const take = (name, text) => {
@@ -423,26 +432,34 @@ async function buildRestoration(state, window, summaryKey, visible = "", base = 
   const restored = new Set;
   const present = normalize(visible);
   const [first, ...later] = state.requests ?? [];
-  const parts = [];
-  if (first && !present.includes(normalize(first))) {
-    parts.push(`The user's request, word for word. Where the summary leaves out a detail, it is here.
-
-${fenced(keepEnds(first, RESTORE_TASK_TOKENS))}`);
-  }
   const missing = later.filter((request) => !present.includes(normalize(request)));
-  if (missing.length > 0) {
-    parts.push(`${parts.length > 0 ? "The user's later messages" : "The user's latest messages"}, oldest first:
+  const taskSection = (firstTokens) => {
+    const parts = [];
+    if (first && !present.includes(normalize(first))) {
+      parts.push(`The user's request, word for word. Where the summary leaves out a detail, it is here.
+
+${fenced(keepEnds(first, firstTokens))}`);
+    }
+    if (missing.length > 0) {
+      parts.push(`${parts.length > 0 ? "The user's later messages" : "The user's latest messages"}, oldest first:
 
 ${missing.map((request) => fenced(keepEnds(request, RESTORE_REQUEST_TOKENS))).join(`
 
 `)}`);
-  }
-  if (parts.length > 0)
-    take("task", `## Your task
+    }
+    return parts.length > 0 ? `## Your task
 
 ${parts.join(`
 
-`)}`);
+`)}` : undefined;
+  };
+  const task = taskSection(RESTORE_TASK_TOKENS);
+  if (task && !take("task", task)) {
+    const over = estimateTokens(task) - budget;
+    const shorter = taskSection(Math.max(100, Math.min(RESTORE_TASK_TOKENS, estimateTokens(first ?? "")) - over - 50));
+    if (shorter)
+      take("task", shorter);
+  }
   const work = [];
   const keptRecent = /<recent-context>\s*\S/.test(visible);
   const steps = state.lean || keptRecent ? [] : latestSteps(state.recent ?? [], recentBudget(room, budget));
@@ -513,19 +530,22 @@ ${work.join(`
 
 ${body}`);
     readingFiles.push(record.path);
-    shown.add(record.path);
   }
-  if (reading.length > 0) {
-    const taken = take("reading", `## Code you were reading
+  for (let count = reading.length;count > 0; count--) {
+    const intro = `## Code you were reading
 
-The parts of these files you read last, as they are on disk now, with line numbers.
+The parts of these files you read last, as they are on disk now, with line numbers.`;
+    if (!take("reading", `${intro}
 
-${reading.join(`
+${reading.slice(0, count).join(`
 
-`)}`);
-    if (taken)
-      for (const file of readingFiles)
-        restored.add(file);
+`)}`))
+      continue;
+    for (const file of readingFiles.slice(0, count)) {
+      shown.add(file);
+      restored.add(file);
+    }
+    break;
   }
   if (state.notes.length > 0 && !state.lean)
     take("notes", `## Your latest progress notes
@@ -576,15 +596,15 @@ ${skillSections.join(`
   if (sections.length === 0)
     return;
   const text = [
-    "<restored-context>",
-    "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more." + (restored.size > 0 ? " The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change." : ""),
-    "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
+    OPENING,
+    CARRY_ON + (restored.size > 0 ? FROM_DISK : ""),
+    NOT_EVERYTHING,
     "",
     sections.join(`
 
 `),
-    ...edited.length > 0 ? ["", "Before you finish:", "- Check your changes against each point of the user's request.", "- Run the tests that cover your changes."] : [],
-    "</restored-context>"
+    ...edited.length > 0 ? BEFORE_FINISHING : [],
+    CLOSING
   ].join(`
 `);
   return {

@@ -290,6 +290,21 @@ function peakPrompt(data: SessionExport) {
 const runDir = (task: Task, model: string, config: string, repeat: number) =>
   path.join(out, `${config}-${model.replace(/[/#]/g, "_")}-${task.id.replace(/^instance_/, "").slice(0, 60)}-${repeat}`)
 
+/**
+ * Milliseconds on Linux's CLOCK_MONOTONIC, which stops while the host is asleep, unlike `Date.now()` and the session's
+ * own times. Falls back to `performance.now()` where libc can't be loaded.
+ */
+const awakeMs = (() => {
+  try {
+    const { dlopen, FFIType, ptr } = require("bun:ffi") as typeof import("bun:ffi")
+    const libc = dlopen("libc.so.6", { clock_gettime: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 } })
+    const time = new BigInt64Array(2)
+    return () => (libc.symbols.clock_gettime(1, ptr(time)) === 0 ? Number(time[0]) * 1000 + Number(time[1]) / 1e6 : performance.now())
+  } catch {
+    return () => performance.now()
+  }
+})()
+
 async function runOne(task: Task, model: string, config: string, repeat: number): Promise<RunResult> {
   const provider = model.split("/")[0] ?? ""
   const root = runDir(task, model, config, repeat)
@@ -327,6 +342,8 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
     steps.push({ step: 0, kind: "setup", ms: Date.now() - started })
 
     started = Date.now()
+    // The session's own times are wall-clock, so they count the hours a host spends asleep mid-run. This clock stops.
+    const turnClock = awakeMs()
     const budget = Number(values.budget) * 60
     let turn: Exec = { code: 1, stdout: "", stderr: "", timedOut: false }
     let forced = 0
@@ -358,6 +375,7 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
         if (sessionID) break
       }
     }
+    const turnMs = awakeMs() - turnClock
     const outOfTime = turn.code === 124 || turn.timedOut
     if (outOfTime && sessionID) {
       await sandbox.opencode(["api", "--server", SERVER, "session.interrupt", "--param", `sessionID=${sessionID}`, "-d", "{}"])
@@ -398,6 +416,7 @@ async function runOne(task: Task, model: string, config: string, repeat: number)
     await sandbox.remove()
     // Measured before grading, so a run whose grading fails can be graded again later with regrade.ts.
     result.metrics = measure(data)
+    result.metrics.durationMs = Math.min(result.metrics.durationMs, turnMs)
     result.peakPrompt = peakPrompt(data)
     const notes = [outOfTime ? "out of time" : "", result.patchBytes ? "" : "empty patch"].filter(Boolean)
     result.check = { success: false, notes }

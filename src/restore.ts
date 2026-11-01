@@ -81,6 +81,16 @@ const normalize = (text: string) => text.replace(/\s+/g, " ").trim()
 
 const isPlan = (record: FileRecord) => record.path.startsWith(PLAN_DIR + path.sep)
 
+// The fixed text around the sections. Its room is set aside first, so the whole restoration stays within the budget.
+const OPENING = "<restored-context>"
+const CARRY_ON =
+  "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more."
+const FROM_DISK = " The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change."
+const NOT_EVERYTHING =
+  "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects."
+const BEFORE_FINISHING = ["", "Before you finish:", "- Check your changes against each point of the user's request.", "- Run the tests that cover your changes."]
+const CLOSING = "</restored-context>"
+
 /**
  * Builds what goes back into the conversation after a compaction, read fresh from disk. `visible` is the text the
  * request already holds from the checkpoint on, so a user message OpenCode kept isn't repeated. `base` is the size of
@@ -96,7 +106,9 @@ export async function buildRestoration(
 ): Promise<Restoration | undefined> {
   const room = Math.max(0, (state.compactedTokens ?? 0) - base)
   const total = restoreBudget(room, window)
-  let budget = total
+  const anyEdited = Object.values(state.files).some((record) => record.editedAt && !isPlan(record))
+  const frame = [OPENING, CARRY_ON + FROM_DISK, NOT_EVERYTHING, "", "", ...(anyEdited ? BEFORE_FINISHING : []), CLOSING].join("\n")
+  let budget = total - estimateTokens(frame)
   const sections: string[] = []
   const sizes: Record<string, number> = {}
   const take = (name: string, text: string) => {
@@ -116,19 +128,28 @@ export async function buildRestoration(
   // The summary keeps the task only in its own words, and in evaluation it lost about one identifier in five.
   const present = normalize(visible)
   const [first, ...later] = state.requests ?? []
-  const parts: string[] = []
-  if (first && !present.includes(normalize(first))) {
-    parts.push(`The user's request, word for word. Where the summary leaves out a detail, it is here.\n\n${fenced(keepEnds(first, RESTORE_TASK_TOKENS))}`)
-  }
   const missing = later.filter((request) => !present.includes(normalize(request)))
-  if (missing.length > 0) {
-    parts.push(
-      `${parts.length > 0 ? "The user's later messages" : "The user's latest messages"}, oldest first:\n\n${missing
-        .map((request) => fenced(keepEnds(request, RESTORE_REQUEST_TOKENS)))
-        .join("\n\n")}`,
-    )
+  const taskSection = (firstTokens: number) => {
+    const parts: string[] = []
+    if (first && !present.includes(normalize(first))) {
+      parts.push(`The user's request, word for word. Where the summary leaves out a detail, it is here.\n\n${fenced(keepEnds(first, firstTokens))}`)
+    }
+    if (missing.length > 0) {
+      parts.push(
+        `${parts.length > 0 ? "The user's later messages" : "The user's latest messages"}, oldest first:\n\n${missing
+          .map((request) => fenced(keepEnds(request, RESTORE_REQUEST_TOKENS)))
+          .join("\n\n")}`,
+      )
+    }
+    return parts.length > 0 ? `## Your task\n\n${parts.join("\n\n")}` : undefined
   }
-  if (parts.length > 0) take("task", `## Your task\n\n${parts.join("\n\n")}`)
+  const task = taskSection(RESTORE_TASK_TOKENS)
+  if (task && !take("task", task)) {
+    // The request matters most, so at a small budget it keeps its start and end rather than being left out.
+    const over = estimateTokens(task) - budget
+    const shorter = taskSection(Math.max(100, Math.min(RESTORE_TASK_TOKENS, estimateTokens(first ?? "")) - over - 50))
+    if (shorter) take("task", shorter)
+  }
 
   // OpenCode keeps no conversation word for word after compacting a session with a single request, so the latest steps
   // come back with what they returned. When OpenCode kept recent conversation itself, it isn't repeated.
@@ -183,11 +204,17 @@ export async function buildRestoration(
     const body = chosen.map(([start, end]) => fenced(numbered(lines.slice(start - 1, end), start))).join("\n\n")
     reading.push(`### ${relative(record.path)}, lines ${label}\n\n${body}`)
     readingFiles.push(record.path)
-    shown.add(record.path)
   }
-  if (reading.length > 0) {
-    const taken = take("reading", `## Code you were reading\n\nThe parts of these files you read last, as they are on disk now, with line numbers.\n\n${reading.join("\n\n")}`)
-    if (taken) for (const file of readingFiles) restored.add(file)
+  // When the section doesn't fit, the least recently used files leave it first. Files left out go on the list below,
+  // by path, instead of vanishing from the restoration.
+  for (let count = reading.length; count > 0; count--) {
+    const intro = "## Code you were reading\n\nThe parts of these files you read last, as they are on disk now, with line numbers."
+    if (!take("reading", `${intro}\n\n${reading.slice(0, count).join("\n\n")}`)) continue
+    for (const file of readingFiles.slice(0, count)) {
+      shown.add(file)
+      restored.add(file)
+    }
+    break
   }
 
   if (state.notes.length > 0 && !state.lean) take("notes", `## Your latest progress notes\n\n${state.notes.map((note) => `- ${note}`).join("\n")}`)
@@ -231,16 +258,13 @@ export async function buildRestoration(
 
   if (sections.length === 0) return undefined
   const text = [
-    "<restored-context>",
-    "The conversation was compacted. Carry on from where you left off; don't start the task over, and if the work is already done, say so briefly instead of inventing more." +
-      (restored.size > 0 ? " The code and changes below were read from disk right after the compaction, so you don't need to read them again unless they change." : ""),
-    "This is only what you used recently, not the whole project. Before a change that may reach other files, such as a rename, search the code for every place it affects.",
+    OPENING,
+    CARRY_ON + (restored.size > 0 ? FROM_DISK : ""),
+    NOT_EVERYTHING,
     "",
     sections.join("\n\n"),
-    ...(edited.length > 0
-      ? ["", "Before you finish:", "- Check your changes against each point of the user's request.", "- Run the tests that cover your changes."]
-      : []),
-    "</restored-context>",
+    ...(edited.length > 0 ? BEFORE_FINISHING : []),
+    CLOSING,
   ].join("\n")
   return {
     text,
