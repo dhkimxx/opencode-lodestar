@@ -3,6 +3,14 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [0.4.2] - 2026-11-01
+
+### Fixed
+
+- When the code the agent was reading didn't all fit, none of it came back, and those files weren't listed either. Now the files used most recently come back and the rest are listed by path.
+- The restoration stays within its budget, the text around its sections included. A request too long for a small budget keeps its start and end instead of being left out.
+- The evaluation harness no longer counts time the host spends asleep in a run's minutes.
+
 ## [0.4.1] - 2026-11-01
 
 ### Changed
@@ -72,6 +80,7 @@ This project follows [Semantic Versioning](https://semver.org).
 - After eight tool calls in a row with no message to the user, the agent is asked for a one-line recap.
 - An evaluation harness that runs SWE-bench Pro tasks with and without lodestar, inside each task's own container.
 
+[0.4.2]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.4.2
 [0.4.1]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.4.1
 [0.4.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.4.0
 [0.3.1]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.1

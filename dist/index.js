@@ -3,7 +3,7 @@
 import { appendFile } from "fs/promises";
 import { Plugin } from "@opencode/plugin";
 // package.json
-var version = "0.4.1";
+var version = "0.4.2";
 
 // src/copies.ts
 var REGISTRY = Symbol.for("opencode-lodestar.copies");
