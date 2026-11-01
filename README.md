@@ -115,7 +115,7 @@ Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os), with 
 
 ### DeepSeek V4.1 Flash
 
-28 task pairs, at reasoning effort `high`.
+28 task pairs, at reasoning effort `high`, with lodestar v0.3.0 and OpenCode 2.0.27.
 
 | Per run | OpenCode alone | With lodestar |
 | --- | --- | --- |
