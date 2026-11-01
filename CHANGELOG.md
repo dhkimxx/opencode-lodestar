@@ -3,6 +3,16 @@
 All notable changes to this project are listed here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [0.4.1] - 2026-11-01
+
+### Changed
+
+- Follows how OpenCode 2.2 sizes compaction, and was tested with OpenCode 2.2.5. OpenCode 2.1 still works.
+- The restoration is sized to the room a compaction frees: the prompt OpenCode compacted, as OpenCode measures it, less what the request right after already holds. Before, it was sized to the conversation alone, counted by characters.
+- The compaction request gets the restoration only when the request before it had it too. OpenCode 2.2 sizes that request by the provider's count of the one before, so a restoration missing from that count could push it past the window.
+- Files listed only by path are no longer described as files to read again; the agent opens one when its next step needs it.
+- lodestar listens only to the OpenCode events it uses.
+
 ## [0.4.0] - 2026-10-24
 
 ### Added
@@ -62,6 +72,7 @@ This project follows [Semantic Versioning](https://semver.org).
 - After eight tool calls in a row with no message to the user, the agent is asked for a one-line recap.
 - An evaluation harness that runs SWE-bench Pro tasks with and without lodestar, inside each task's own container.
 
+[0.4.1]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.4.1
 [0.4.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.4.0
 [0.3.1]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.1
 [0.3.0]: https://github.com/dhkimxx/opencode-lodestar/releases/tag/v0.3.0

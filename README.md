@@ -19,7 +19,7 @@ When a long session fills the context window, OpenCode replaces the conversation
 
 ## Requirements
 
-OpenCode 2.1 or newer. Tested with OpenCode 2.1.2. OpenCode 1 is not supported.
+OpenCode 2.1 or newer. Tested with OpenCode 2.2.5. OpenCode 1 is not supported.
 
 lodestar restores after the summaries OpenCode writes when it compacts. A model set to compact on the provider's side (`"compaction": { "type": "native" }` in its settings) gets the provider's own record back instead of a summary, so there is nothing for lodestar to restore. Its reminders still work.
 
@@ -95,10 +95,10 @@ The line `/lodestar` prints is hidden from the model.
 - **Restoring.** What lodestar restores goes into the request right after the summary.
   - Files the agent changed come back whole, the most recently changed first. Files over about 5,000 tokens come back as their `git diff` instead, when the project uses git. `git status` comes along too.
   - Files the agent only read come back as the lines it read last.
-  - The agent's latest steps come back word for word: what its commands and searches returned, and what it wrote. They take up to a tenth of the conversation that was compacted.
+  - The agent's latest steps come back word for word: what its commands and searches returned, and what it wrote. They take up to a tenth of the room the compaction freed.
   - When a compaction comes right after the previous one, only your request, the latest steps, and the list of files come back.
   - Everything is read from disk once per compaction and stays the same until the next one. It also goes into OpenCode's compaction request, so the provider's prompt cache keeps working.
-  - The whole restoration may use up to 20% of the size the conversation had when it was compacted, with a floor of 3,000 tokens and a ceiling of 40,000. It never takes more than 20% of the model's context window.
+  - The whole restoration may use up to 20% of the room the compaction freed: the size of the prompt when OpenCode compacted it, as OpenCode measures it, less what the request right after already holds, such as the system prompt, the tools, and the summary. It has a floor of 3,000 tokens and a ceiling of 40,000, and never takes more than 20% of the model's context window.
 - **Reminders.** The recap request and the changed-file notice are added to a single request and never saved in the session.
 
 ## With other plugins
@@ -109,7 +109,7 @@ The line `/lodestar` prints is hidden from the model.
 ## Results
 
 - **DeepSeek V4.1 Flash:** about the same tasks resolved (25 against 27), at 39% lower cost.
-- **GPT-6 Luna:** more tasks resolved (12 against 18), at 66% higher cost.
+- **GPT-6 Luna:** more tasks resolved (10 against 15), at 50% higher cost per run and the same cost per resolved task.
 
 Measured on [SWE-bench Pro](https://github.com/scaleapi/SWE-bench_Pro-os), with each task worked by OpenCode alone and by OpenCode with lodestar, then graded by its hidden tests. Sessions were compacted early so that most runs compacted, many of them several times.
 
@@ -129,20 +129,19 @@ In 3 of the 28 pairs only lodestar resolved the task, and in 1 only OpenCode alo
 
 ### GPT-6 Luna
 
-22 task pairs, at reasoning effort `high`.
+22 task pairs, at reasoning effort `high`, with OpenCode 2.2.5.
 
 | Per run, over 22 pairs | OpenCode alone | With lodestar |
 | --- | --- | --- |
-| Tasks resolved | 12 | 18 |
-| Cost | $0.034 | $0.056 (+66%) |
-| Cost per resolved task | $0.062 | $0.069 (+10%) |
-| Uncached prompt tokens | 212k | 382k (+81%) |
-| Tool calls | 73 | 125 (+71%) |
-| Files read again after compaction | 19.3 | 59.9 (+210%) |
-| Compactions | 6.0 | 10.3 (+72%) |
-| Minutes | 6.0 | 7.7 (+28%) |
+| Tasks resolved | 10 | 15 |
+| Cost | $0.039 | $0.058 (+50%) |
+| Cost per resolved task | $0.085 | $0.085 (0%) |
+| Uncached prompt tokens | 232k | 370k (+60%) |
+| Tool calls | 94 | 121 (+28%) |
+| Compactions | 6.4 | 10.4 (+62%) |
+| Minutes | 7.4 | 9.4 (+26%) |
 
-In 8 of the 22 pairs only lodestar resolved the task, and in 2 only OpenCode alone did. Both resolved 10 and neither resolved 2. On those 10, lodestar cost about 3.3 times as much ($0.061 against $0.018). The difference in tasks resolved isn't settled: 22 pairs from 11 tasks can't rule out chance. Tool calls and re-reads count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/v0.3.1-gpt-6-luna.md](eval/results/v0.3.1-gpt-6-luna.md).
+In 6 of the 22 pairs only lodestar resolved the task, and in 1 only OpenCode alone did. On the 9 both resolved, lodestar cost less ($0.017 against $0.022). The extra cost comes from the 6 neither resolved, where lodestar kept working longer. The difference in tasks resolved isn't settled: 22 pairs from 11 tasks can't rule out chance. Tool calls count shell commands that print files as well as the read tool, so they aren't comparable with the DeepSeek rows. Details are in [eval/results/v0.4.1-gpt-6-luna.md](eval/results/v0.4.1-gpt-6-luna.md).
 
 ## Development
 
