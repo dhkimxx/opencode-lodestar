@@ -154,7 +154,7 @@ bun install
 bun run check
 ```
 
-`bun run check` type-checks the code, runs the tests, and builds `dist/index.js`. To try your changes, point OpenCode at your clone in `~/.config/opencode/opencode.json`, then restart OpenCode:
+`bun run check` type-checks the code, runs the tests, and builds `dist/index.js`. `bun run smoke` then runs lodestar in a real OpenCode against a scripted model, with no tokens spent. To try your changes, point OpenCode at your clone in `~/.config/opencode/opencode.json`, then restart OpenCode:
 
 ```json
 {
